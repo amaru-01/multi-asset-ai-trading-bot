@@ -124,3 +124,19 @@ On a non-buy signal, it cancels open orders for the symbol, waits for cancellati
 - The JSON model artifact must be exported from the Kaggle training notebook and placed in `Model/` before execution; the previous `.pkl` artifact is no longer loaded.
 - Reported backtest performance is limited to the supplied screenshot; fees, slippage, and other risk statistics are not documented in the repository.
 - A classifier prediction is not a guarantee of future price direction.
+
+## Kaggle Model Prediction Curves
+
+The following charts were generated in the Kaggle notebook on **October 4, 2026**.
+
+### SPY
+
+![SPY out-of-sample strategy backtest curve](Output_model/Equirt_curve_output.png)
+
+### Bitcoin (BTC)
+
+![Bitcoin price and technical indicator curve](Output_model/Visual_BTC_Curve.png)
+
+### Ethereum (ETH)
+
+![Ethereum price and technical indicator curve](Output_model/Visual_ETH_Curve.png)

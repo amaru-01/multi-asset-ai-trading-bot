@@ -22,7 +22,6 @@ from dotenv import load_dotenv
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-MODEL_PATH = PROJECT_ROOT / "Model" / "xgb_trading_model.json"
 FEATURE_COLUMNS = [
     "RSI",
     "MACD",
@@ -37,12 +36,40 @@ STOP_LOSS_PERCENT = Decimal("0.01")
 CANCEL_TIMEOUT_SECONDS = 10
 CANCEL_POLL_INTERVAL_SECONDS = 0.5
 
+# Each asset uses its own market-data ticker, Alpaca symbol, model, and allocation.
+SYMBOLS_CONFIG = [
+    {
+        "symbol": "SPY",
+        "type": "stock",
+        "yfinance_ticker": "SPY",
+        "alpaca_symbol": "SPY",
+        "model_path": "Model/xgb_trading_model.json",
+        "allocation_dollars": 1000,
+    },
+    {
+        "symbol": "BTC",
+        "type": "crypto",
+        "yfinance_ticker": "BTC-USD",
+        "alpaca_symbol": "BTC/USD",
+        "model_path": "Model/xgb_btc_model.json",
+        "allocation_dollars": 500,
+    },
+    {
+        "symbol": "ETH",
+        "type": "crypto",
+        "yfinance_ticker": "ETH-USD",
+        "alpaca_symbol": "ETH/USD",
+        "model_path": "Model/xgb_eth_model.json",
+        "allocation_dollars": 500,
+    },
+]
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
     datefmt="%Y-%m-%dT%H:%M:%S%z",
 )
-logger = logging.getLogger("spy_trading_bot")
+logger = logging.getLogger("multi_asset_trading_bot")
 
 load_dotenv(PROJECT_ROOT / ".env")
 
@@ -58,28 +85,32 @@ def create_trading_client() -> TradingClient:
     return TradingClient(api_key, secret_key, paper=True)
 
 
-def load_model() -> xgb.XGBClassifier:
-    """Load the native XGBoost JSON model and verify its feature order."""
-    if not MODEL_PATH.is_file():
-        raise FileNotFoundError(
-            f"Model not found: {MODEL_PATH}. Export the Kaggle model as JSON first."
-        )
+def load_model(model_path: Path) -> xgb.XGBClassifier:
+    """Load one native XGBoost JSON model and validate its feature contract."""
+    if not model_path.is_file():
+        raise FileNotFoundError(f"Model file not found: {model_path}")
 
     model = xgb.XGBClassifier()
     try:
-        model.load_model(str(MODEL_PATH))
+        model.load_model(str(model_path))
     except Exception as exc:
-        logger.exception("Could not load XGBoost model path=%s", MODEL_PATH)
-        raise RuntimeError(f"Unable to load model at {MODEL_PATH}") from exc
+        logger.exception("Could not load XGBoost model path=%s", model_path)
+        raise RuntimeError(f"Unable to load model at {model_path}") from exc
 
-    trained_features = model.get_booster().feature_names
+    booster = model.get_booster()
+    trained_features = booster.feature_names
     if trained_features and trained_features != FEATURE_COLUMNS:
         raise ValueError(
             "Model feature names/order do not match execution features: "
             f"model={trained_features}, execution={FEATURE_COLUMNS}"
         )
+    if booster.num_features() != len(FEATURE_COLUMNS):
+        raise ValueError(
+            f"Model expects {booster.num_features()} features; "
+            f"execution provides {len(FEATURE_COLUMNS)}."
+        )
 
-    logger.info("Loaded model path=%s", MODEL_PATH)
+    logger.info("Loaded XGBoost model path=%s", model_path)
     return model
 
 
@@ -101,8 +132,8 @@ def _normalize_market_columns(data: pd.DataFrame) -> pd.DataFrame:
     return data.loc[:, ["Open", "High", "Low", "Close", "Volume"]].copy()
 
 
-def get_latest_features(ticker: str = "SPY") -> tuple[pd.DataFrame, float]:
-    """Download recent OHLCV data and calculate one aligned model row."""
+def get_latest_features(ticker: str) -> tuple[pd.DataFrame, float]:
+    """Download recent OHLCV data and calculate one aligned model input row."""
     try:
         data = yf.download(
             ticker,
@@ -134,18 +165,23 @@ def get_latest_features(ticker: str = "SPY") -> tuple[pd.DataFrame, float]:
         data["RSI_lag1"] = data["RSI"].shift(1)
         data["Return_lag1"] = data["Return_1D"].shift(1)
 
+        # Keep the model input finite and in the same order used during training.
         data.replace([float("inf"), float("-inf")], float("nan"), inplace=True)
         data.dropna(subset=FEATURE_COLUMNS + ["Close"], inplace=True)
         if data.empty:
-            raise ValueError(f"Not enough valid history to calculate features for {ticker}.")
+            raise ValueError(
+                f"Not enough valid history to calculate features for {ticker}."
+            )
 
         latest_features = data.loc[:, FEATURE_COLUMNS].tail(1).astype(float)
         reference_price = float(data["Close"].iloc[-1])
         if not math.isfinite(reference_price) or reference_price <= 0:
-            raise ValueError(f"Invalid reference price for {ticker}: {reference_price}.")
+            raise ValueError(
+                f"Invalid reference price for {ticker}: {reference_price}."
+            )
         return latest_features, reference_price
     except Exception as exc:
-        logger.exception("Failed to fetch or prepare market data symbol=%s", ticker)
+        logger.exception("Failed to fetch or prepare market data ticker=%s", ticker)
         raise RuntimeError(f"Unable to prepare market features for {ticker}.") from exc
 
 
@@ -158,51 +194,61 @@ def _get_open_orders(trading_client: TradingClient, symbol: str) -> list:
     request = GetOrdersRequest(
         status=QueryOrderStatus.OPEN,
         symbols=[symbol],
-        nested=True,
     )
     return trading_client.get_orders(filter=request)
 
 
 def _cancel_open_orders(trading_client: TradingClient, symbol: str) -> None:
-    """Cancel all open orders for a symbol and wait for cancellation to settle."""
-    open_orders = _get_open_orders(trading_client, symbol)
-    for order in open_orders:
+    """Cancel open symbol orders and wait briefly for cancellation to settle."""
+    deadline = time.monotonic() + CANCEL_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        open_orders = _get_open_orders(trading_client, symbol)
+        if not open_orders:
+            logger.info("No remaining open orders symbol=%s", symbol)
+            return
+
+        # Refresh after each cancellation because canceling one bracket exit can
+        # automatically cancel its paired exit order.
+        order = open_orders[0]
         logger.info(
             "Canceling open order symbol=%s order_id=%s status=%s",
             symbol,
             order.id,
             order.status,
         )
-        trading_client.cancel_order_by_id(order.id)
-
-    if not open_orders:
-        return
-
-    deadline = time.monotonic() + CANCEL_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        remaining_orders = _get_open_orders(trading_client, symbol)
-        if not remaining_orders:
-            logger.info("All open orders canceled symbol=%s", symbol)
-            return
+        try:
+            trading_client.cancel_order_by_id(order.id)
+        except Exception:
+            # A fill/cancel race is harmless if the order has already left the
+            # open set; propagate the error if the order is still active.
+            remaining_ids = {
+                str(open_order.id)
+                for open_order in _get_open_orders(trading_client, symbol)
+            }
+            if str(order.id) in remaining_ids:
+                raise
+            logger.info("Order no longer open after cancel race order_id=%s", order.id)
         time.sleep(CANCEL_POLL_INTERVAL_SECONDS)
 
+    remaining_orders = _get_open_orders(trading_client, symbol)
     remaining_ids = [str(order.id) for order in remaining_orders]
     raise TimeoutError(
         f"Timed out waiting for open orders to cancel for {symbol}: {remaining_ids}"
     )
 
 
+def _get_open_position(trading_client: TradingClient, symbol: str):
+    """Find a position by Alpaca's symbol, including slash-separated crypto pairs."""
+    positions = trading_client.get_all_positions()
+    return next((position for position in positions if position.symbol == symbol), None)
+
+
 def _close_position_if_open(trading_client: TradingClient, symbol: str) -> None:
-    positions = [
-        position
-        for position in trading_client.get_all_positions()
-        if position.symbol == symbol
-    ]
-    if not positions:
+    position = _get_open_position(trading_client, symbol)
+    if position is None:
         logger.info("No open position to close symbol=%s", symbol)
         return
 
-    position = positions[0]
     logger.info(
         "Closing position symbol=%s qty=%s side=%s",
         symbol,
@@ -218,113 +264,167 @@ def _close_position_if_open(trading_client: TradingClient, symbol: str) -> None:
     )
 
 
-def execute_trade(
-    symbol: str = "SPY",
-    allocation_dollars: float = 1000,
-    trading_client: TradingClient | None = None,
+def execute_asset(
+    asset: dict,
+    trading_client: TradingClient,
+    model: xgb.XGBClassifier,
 ) -> None:
-    """Predict direction and manage a paper position with attached bracket exits."""
-    if allocation_dollars <= 0:
-        raise ValueError("allocation_dollars must be greater than zero.")
+    """Evaluate one configured asset and submit its appropriate paper order."""
+    asset_type = asset["type"]
+    if asset_type not in {"stock", "crypto"}:
+        raise ValueError(f"Unsupported asset type: {asset_type}")
 
-    client = trading_client or create_trading_client()
-    account = client.get_account()
-    logger.info(
-        "Account status=%s equity=%s buying_power=%s paper=true",
-        account.status,
-        account.equity,
-        account.buying_power,
-    )
-
-    model = load_model()
-    latest_features, reference_price = get_latest_features(symbol)
+    logical_symbol = asset["symbol"]
+    alpaca_symbol = asset["alpaca_symbol"]
+    latest_features, reference_price = get_latest_features(asset["yfinance_ticker"])
     prediction = int(model.predict(latest_features)[0])
     probabilities = model.predict_proba(latest_features)[0]
     upward_probability = float(probabilities[1])
     logger.info(
-        "Prediction symbol=%s reference_price=%.2f class=%d upward_probability=%.4f",
-        symbol,
+        "Asset prediction symbol=%s type=%s yfinance_ticker=%s "
+        "alpaca_symbol=%s reference_price=%.2f prediction=%d "
+        "upward_probability=%.4f",
+        logical_symbol,
+        asset_type,
+        asset["yfinance_ticker"],
+        alpaca_symbol,
         reference_price,
         prediction,
         upward_probability,
     )
 
     if prediction != 1:
-        logger.info("Non-buy signal; canceling orders and closing any position symbol=%s", symbol)
-        _cancel_open_orders(client, symbol)
-        _close_position_if_open(client, symbol)
+        logger.info(
+            "Non-buy signal; cleaning up orders and position symbol=%s",
+            alpaca_symbol,
+        )
+        _cancel_open_orders(trading_client, alpaca_symbol)
+        _close_position_if_open(trading_client, alpaca_symbol)
         return
 
-    open_orders = _get_open_orders(client, symbol)
-    positions = [
-        position
-        for position in client.get_all_positions()
-        if position.symbol == symbol
-    ]
-    if open_orders or positions:
+    # Do not increase exposure when this asset already has an order or position.
+    open_orders = _get_open_orders(trading_client, alpaca_symbol)
+    position = _get_open_position(trading_client, alpaca_symbol)
+    if open_orders or position is not None:
         logger.warning(
-            "Skipping buy to avoid duplicate exposure symbol=%s open_orders=%d positions=%d",
-            symbol,
+            "Skipping buy to avoid duplicate exposure symbol=%s open_orders=%d "
+            "has_position=%s",
+            alpaca_symbol,
             len(open_orders),
-            len(positions),
+            position is not None,
         )
         return
 
-    quantity = math.floor(allocation_dollars / reference_price)
-    if quantity <= 0:
-        raise ValueError(
-            f"Allocation ${allocation_dollars:.2f} is below the price of one "
-            f"whole {symbol} share at ${reference_price:.2f}; Alpaca bracket "
-            "orders do not support fractional shares."
+    allocation = float(asset["allocation_dollars"])
+    if allocation <= 0:
+        raise ValueError(f"Allocation must be positive for {logical_symbol}.")
+
+    if asset_type == "crypto":
+        # Crypto market orders use USD notional rather than fractional share qty.
+        order_request = MarketOrderRequest(
+            symbol=alpaca_symbol,
+            notional=allocation,
+            side=OrderSide.BUY,
+            time_in_force=TimeInForce.GTC,
+        )
+        logger.info(
+            "Submitting crypto market buy symbol=%s notional_usd=%.2f",
+            alpaca_symbol,
+            allocation,
+        )
+    else:
+        # Alpaca equity bracket orders require whole shares; round down to budget.
+        quantity = math.floor(allocation / reference_price)
+        if quantity <= 0:
+            raise ValueError(
+                f"Allocation ${allocation:.2f} is below the price of one whole "
+                f"{alpaca_symbol} share at ${reference_price:.2f}."
+            )
+
+        reference_decimal = Decimal(str(reference_price))
+        take_profit_price = _round_price(
+            reference_decimal * (Decimal("1") + Decimal("0.015"))
+        )
+        stop_loss_price = _round_price(
+            reference_decimal * (Decimal("1") - Decimal("0.01"))
+        )
+        order_request = MarketOrderRequest(
+            symbol=alpaca_symbol,
+            qty=quantity,
+            side=OrderSide.BUY,
+            time_in_force=TimeInForce.GTC,
+            order_class=OrderClass.BRACKET,
+            take_profit=TakeProfitRequest(limit_price=take_profit_price),
+            stop_loss=StopLossRequest(stop_price=stop_loss_price),
+        )
+        logger.info(
+            "Submitting equity bracket buy symbol=%s qty=%d reference_price=%.2f "
+            "take_profit=%.2f stop_loss=%.2f reference_is_estimate=true",
+            alpaca_symbol,
+            quantity,
+            reference_price,
+            take_profit_price,
+            stop_loss_price,
         )
 
-    reference_decimal = Decimal(str(reference_price))
-    take_profit_price = _round_price(
-        reference_decimal * (Decimal("1") + TAKE_PROFIT_PERCENT)
-    )
-    stop_loss_price = _round_price(
-        reference_decimal * (Decimal("1") - STOP_LOSS_PERCENT)
-    )
-    logger.info(
-        "Submitting bracket buy symbol=%s qty=%.2f reference_price=%.2f "
-        "take_profit=%.2f stop_loss=%.2f",
-        symbol,
-        float(quantity),
-        reference_price,
-        take_profit_price,
-        stop_loss_price,
-    )
-
-    order_request = MarketOrderRequest(
-        symbol=symbol,
-        qty=quantity,
-        side=OrderSide.BUY,
-        time_in_force=TimeInForce.GTC,
-        order_class=OrderClass.BRACKET,
-        take_profit=TakeProfitRequest(limit_price=take_profit_price),
-        stop_loss=StopLossRequest(stop_price=stop_loss_price),
-    )
     try:
-        order = client.submit_order(order_request)
+        order = trading_client.submit_order(order_request)
     except Exception as exc:
-        logger.exception("Bracket order submission failed symbol=%s", symbol)
-        raise RuntimeError(f"Unable to submit bracket order for {symbol}.") from exc
+        logger.exception("Order submission failed symbol=%s", alpaca_symbol)
+        raise RuntimeError(f"Unable to submit order for {alpaca_symbol}.") from exc
 
     logger.info(
-        "Bracket order submitted symbol=%s order_id=%s status=%s "
-        "reference_price_is_estimate=true",
-        symbol,
+        "Order submitted symbol=%s order_id=%s status=%s",
+        alpaca_symbol,
         order.id,
         order.status,
     )
 
 
 def main() -> int:
+    """Run configured assets sequentially; return non-zero on asset failures."""
     try:
-        execute_trade(symbol="SPY", allocation_dollars=1000)
+        trading_client = create_trading_client()
+        account = trading_client.get_account()
     except Exception:
-        logger.exception("Trading execution failed")
+        logger.exception("Unable to initialize or query Alpaca paper account")
         return 1
+
+    logger.info(
+        "Alpaca paper account status=%s equity=%s buying_power=%s",
+        account.status,
+        account.equity,
+        account.buying_power,
+    )
+
+    # Process assets serially to keep API usage and runner time predictable.
+    had_asset_failure = False
+    for asset in SYMBOLS_CONFIG:
+        model_path = PROJECT_ROOT / asset["model_path"]
+        if not model_path.is_file() and asset["type"] == "crypto":
+            logger.warning(
+                "Model file not found for %s, skipping... path=%s",
+                asset["yfinance_ticker"],
+                model_path,
+            )
+            continue
+
+        try:
+            model = load_model(model_path)
+            execute_asset(asset, trading_client, model)
+        except Exception:
+            had_asset_failure = True
+            logger.exception(
+                "Asset processing failed symbol=%s alpaca_symbol=%s",
+                asset["symbol"],
+                asset["alpaca_symbol"],
+            )
+
+    if had_asset_failure:
+        logger.error("One or more assets failed during this execution.")
+        return 1
+
+    logger.info("Multi-asset trading execution completed.")
     return 0
 
 
