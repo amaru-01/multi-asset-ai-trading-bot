@@ -29,7 +29,7 @@ These figures are transcribed from the supplied output image. In that run, the s
 
 1. **Prepare data:** download SPY daily prices and calculate features with `fetch_data.py` or `prepare_dataset.py`.
 2. **Train:** upload the generated CSV to Kaggle and train the XGBoost classifier there. The training notebook is not included in this repository.
-3. **Predict and paper trade:** `run_execution.py` downloads recent SPY data, recreates the model features, loads the saved classifier, and sends a paper order based on its prediction.
+3. **Predict and paper trade:** `run_execution.py` downloads recent SPY data, recreates the model features, loads the saved classifier, and manages a paper position based on its prediction.
 
 ## Project Files
 
@@ -38,7 +38,7 @@ These figures are transcribed from the supplied output image. In that run, the s
 | `fetch_data.py` | Downloads historical SPY prices, engineers features, and exports the dataset. |
 | `prepare_dataset.py` | Alternate script for generating the same feature dataset. |
 | `run_execution.py` | Loads the saved model and runs the Alpaca paper-trading workflow. |
-| `Model/xgb_trading_model.pkl` | Serialized XGBoost classifier used for prediction. |
+| `Model/xgb_trading_model.json` | Native XGBoost classifier model used for prediction. Export this from Kaggle after training. |
 | `Output_model/Equirt_curve_output.png` | Equity curve and backtest metrics from Kaggle. |
 | `requirements.txt` | Python package dependencies. |
 | `.gitignore` | Excludes local environments, secrets, caches, and generated CSV data. |
@@ -61,7 +61,7 @@ The dataset contains these model inputs:
 - **Python**, **pandas** — data preparation and tabular features
 - **yfinance** — historical and recent market data
 - **ta** — technical indicators
-- **XGBoost**, **scikit-learn**, **joblib** — classification model and serialization
+- **XGBoost**, **scikit-learn** — classification model and native JSON serialization
 - **Kaggle Notebooks** — model training and backtest output
 - **Alpaca Trading API** (`alpaca-py`) — paper account and order submission
 - **python-dotenv** — local API credential loading
@@ -95,16 +95,32 @@ python fetch_data.py
 
 Alternatively, use `python prepare_dataset.py`. Both scripts download SPY daily data from 2020-01-01 through 2025-12-31 and write `trading_features_spy.csv` in the project root. The CSV is ignored by Git and can be uploaded to Kaggle for training.
 
-After placing the trained model at `Model/xgb_trading_model.pkl` and configuring paper credentials, run:
+### Export the trained model
+
+In the Kaggle notebook, save the fitted XGBoost classifier in native JSON format and download or copy it into `Model/xgb_trading_model.json` in this repository:
+
+```python
+# `model` is the fitted xgboost.XGBClassifier used for training.
+model.save_model("xgb_trading_model.json")
+```
+
+This format avoids loading the estimator through Python pickle. Keep the training feature names and order identical to `FEATURE_COLUMNS` in `run_execution.py`.
+
+### Run the paper trader
+
+After placing the JSON model at `Model/xgb_trading_model.json` and configuring paper credentials, run:
 
 ```powershell
 python run_execution.py
 ```
 
-The execution script may submit a paper buy order or close a paper position based on the model signal. Review its behavior and verify the Alpaca account is in paper mode before running it.
+On a buy signal, the script submits an Alpaca bracket market order with a take-profit limit 1.5% above and a stop-loss 1.0% below the latest yfinance close, rounded to cents. Alpaca bracket orders require whole-share quantities, so the dollar allocation is rounded down to an integer number of shares. The latest close is an estimate, not a guaranteed fill price; market slippage means the actual exits may not be exactly 1.5% and 1.0% from the fill.
+
+On a non-buy signal, it cancels open orders for the symbol, waits for cancellation to settle, and closes any open position. Errors are timestamped in the log and return a non-zero process status for GitHub Actions. The script is hard-coded for Alpaca paper mode; review signals and account settings before running it.
 
 ## Limitations
 
 - The Kaggle training notebook and reproducible train/test split are not included here.
+- The JSON model artifact must be exported from the Kaggle training notebook and placed in `Model/` before execution; the previous `.pkl` artifact is no longer loaded.
 - Reported backtest performance is limited to the supplied screenshot; fees, slippage, and other risk statistics are not documented in the repository.
 - A classifier prediction is not a guarantee of future price direction.
