@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-FEATURE_COLUMNS = [
+STOCK_FEATURE_COLUMNS = [
     "RSI",
     "MACD",
     "ATR",
@@ -30,6 +30,15 @@ FEATURE_COLUMNS = [
     "Vol_Change",
     "RSI_lag1",
     "Return_lag1",
+]
+CRYPTO_FEATURE_COLUMNS = [
+    "SMA_10",
+    "SMA_50",
+    "RSI",
+    "MACD",
+    "MACD_signal",
+    "BB_high",
+    "BB_low",
 ]
 TAKE_PROFIT_PERCENT = Decimal("0.015")
 STOP_LOSS_PERCENT = Decimal("0.01")
@@ -45,6 +54,7 @@ SYMBOLS_CONFIG = [
         "alpaca_symbol": "SPY",
         "model_path": "Model/xgb_trading_model.json",
         "allocation_dollars": 1000,
+        "feature_columns": STOCK_FEATURE_COLUMNS,
     },
     {
         "symbol": "BTC",
@@ -53,6 +63,7 @@ SYMBOLS_CONFIG = [
         "alpaca_symbol": "BTC/USD",
         "model_path": "Model/xgb_btc_model.json",
         "allocation_dollars": 500,
+        "feature_columns": CRYPTO_FEATURE_COLUMNS,
     },
     {
         "symbol": "ETH",
@@ -61,6 +72,7 @@ SYMBOLS_CONFIG = [
         "alpaca_symbol": "ETH/USD",
         "model_path": "Model/xgb_eth_model.json",
         "allocation_dollars": 500,
+        "feature_columns": CRYPTO_FEATURE_COLUMNS,
     },
 ]
 
@@ -85,7 +97,10 @@ def create_trading_client() -> TradingClient:
     return TradingClient(api_key, secret_key, paper=True)
 
 
-def load_model(model_path: Path) -> xgb.XGBClassifier:
+def load_model(
+    model_path: Path,
+    expected_features: list[str],
+) -> xgb.XGBClassifier:
     """Load one native XGBoost JSON model and validate its feature contract."""
     if not model_path.is_file():
         raise FileNotFoundError(f"Model file not found: {model_path}")
@@ -99,15 +114,15 @@ def load_model(model_path: Path) -> xgb.XGBClassifier:
 
     booster = model.get_booster()
     trained_features = booster.feature_names
-    if trained_features and trained_features != FEATURE_COLUMNS:
+    if trained_features and trained_features != expected_features:
         raise ValueError(
             "Model feature names/order do not match execution features: "
-            f"model={trained_features}, execution={FEATURE_COLUMNS}"
+            f"model={trained_features}, execution={expected_features}"
         )
-    if booster.num_features() != len(FEATURE_COLUMNS):
+    if booster.num_features() != len(expected_features):
         raise ValueError(
             f"Model expects {booster.num_features()} features; "
-            f"execution provides {len(FEATURE_COLUMNS)}."
+            f"execution provides {len(expected_features)}."
         )
 
     logger.info("Loaded XGBoost model path=%s", model_path)
@@ -132,7 +147,10 @@ def _normalize_market_columns(data: pd.DataFrame) -> pd.DataFrame:
     return data.loc[:, ["Open", "High", "Low", "Close", "Volume"]].copy()
 
 
-def get_latest_features(ticker: str) -> tuple[pd.DataFrame, float]:
+def get_latest_features(
+    ticker: str,
+    feature_columns: list[str],
+) -> tuple[pd.DataFrame, float]:
     """Download recent OHLCV data and calculate one aligned model input row."""
     try:
         data = yf.download(
@@ -165,15 +183,29 @@ def get_latest_features(ticker: str) -> tuple[pd.DataFrame, float]:
         data["RSI_lag1"] = data["RSI"].shift(1)
         data["Return_lag1"] = data["Return_1D"].shift(1)
 
-        # Keep the model input finite and in the same order used during training.
+        # Crypto models use a separate SMA, MACD signal, and Bollinger schema.
+        data["SMA_10"] = close.rolling(window=10).mean()
+        data["SMA_50"] = close.rolling(window=50).mean()
+        data["MACD_signal"] = ta.trend.macd_signal(close)
+        data["BB_high"] = ta.volatility.bollinger_hband(close)
+        data["BB_low"] = ta.volatility.bollinger_lband(close)
+
+        missing_features = set(feature_columns).difference(data.columns)
+        if missing_features:
+            raise ValueError(
+                f"Unsupported model features for {ticker}: "
+                f"{sorted(missing_features)}"
+            )
+
+        # Keep model inputs finite and in the model's trained feature order.
         data.replace([float("inf"), float("-inf")], float("nan"), inplace=True)
-        data.dropna(subset=FEATURE_COLUMNS + ["Close"], inplace=True)
+        data.dropna(subset=feature_columns + ["Close"], inplace=True)
         if data.empty:
             raise ValueError(
                 f"Not enough valid history to calculate features for {ticker}."
             )
 
-        latest_features = data.loc[:, FEATURE_COLUMNS].tail(1).astype(float)
+        latest_features = data.loc[:, feature_columns].tail(1).astype(float)
         reference_price = float(data["Close"].iloc[-1])
         if not math.isfinite(reference_price) or reference_price <= 0:
             raise ValueError(
@@ -276,7 +308,11 @@ def execute_asset(
 
     logical_symbol = asset["symbol"]
     alpaca_symbol = asset["alpaca_symbol"]
-    latest_features, reference_price = get_latest_features(asset["yfinance_ticker"])
+    feature_columns = asset["feature_columns"]
+    latest_features, reference_price = get_latest_features(
+        asset["yfinance_ticker"],
+        feature_columns,
+    )
     prediction = int(model.predict(latest_features)[0])
     probabilities = model.predict_proba(latest_features)[0]
     upward_probability = float(probabilities[1])
@@ -410,7 +446,7 @@ def main() -> int:
             continue
 
         try:
-            model = load_model(model_path)
+            model = load_model(model_path, asset["feature_columns"])
             execute_asset(asset, trading_client, model)
         except Exception:
             had_asset_failure = True
