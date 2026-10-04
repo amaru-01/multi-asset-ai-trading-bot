@@ -1,104 +1,110 @@
-# AI Trading Bot Data Pipeline
+# SPY AI Trading Bot
 
-This project prepares a machine-learning dataset for a stock trading strategy using SPY (SPDR S&P 500 ETF Trust) historical market data. It downloads daily price data, engineers technical indicators, and exports a clean CSV file suitable for model training.
+<p align="center">
+	<img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+">
+	<img src="https://img.shields.io/badge/Model-XGBoost-EC6B23" alt="XGBoost model">
+	<img src="https://img.shields.io/badge/Broker-Alpaca%20Paper-5CB85C" alt="Alpaca paper trading">
+	<img src="https://img.shields.io/badge/Data-Yahoo%20Finance-6001D2" alt="Yahoo Finance data">
+</p>
 
-## Overview
+A Python research project for predicting the next-day direction of SPY (SPDR S&P 500 ETF Trust). It builds technical features from historical prices, uses an XGBoost classifier trained in Kaggle, and connects predictions to an Alpaca **paper-trading** account.
 
-The repository focuses on the data preparation stage of an AI trading bot. It:
+> This is an educational prototype, not investment advice. Backtest results are historical and do not predict future performance. The execution script is configured for Alpaca paper trading, not live trading.
 
-- fetches historical SPY market data from Yahoo Finance
-- calculates momentum, trend, and volatility indicators
-- creates lagged features to reduce look-ahead bias
-- labels each row based on whether the next day’s return is positive
-- saves the dataset as a CSV for downstream training and experimentation
+## Backtest Snapshot
 
-## Included Files
+The chart below is the Kaggle backtest output included with the project.
 
-- `fetch_data.py` — script that downloads data and creates the feature dataset
-- `prepare_dataset.py` — equivalent pipeline script for preparing the same dataset
-- `trading_features_spy.csv` — generated output containing the feature set and target
+![Kaggle out-of-sample equity curve comparing the XGBoost strategy with SPY buy-and-hold](Output_model/Equirt_curve_output.png)
 
-## What the Pipeline Computes
+| Reported metric | Result |
+| --- | ---: |
+| Strategy total return | 4.57% |
+| SPY buy-and-hold return | 20.40% |
+| Annualized Sharpe ratio | 0.31 |
 
-The dataset includes the following engineered features:
+These figures are transcribed from the supplied output image. In that run, the strategy returned less than buy-and-hold; this result should be evaluated with additional validation, costs, and risk measures before drawing conclusions.
 
-- RSI (14-day Relative Strength Index)
-- MACD difference
-- ATR (Average True Range)
-- 1-day return
-- volume change
-- lagged RSI and return values
-- target label: 1 if tomorrow’s return is positive, otherwise 0
+## Workflow
 
-This converts the raw OHLCV market data into a supervised learning problem for a binary classification model.
+1. **Prepare data:** download SPY daily prices and calculate features with `fetch_data.py` or `prepare_dataset.py`.
+2. **Train:** upload the generated CSV to Kaggle and train the XGBoost classifier there. The training notebook is not included in this repository.
+3. **Predict and paper trade:** `run_execution.py` downloads recent SPY data, recreates the model features, loads the saved classifier, and sends a paper order based on its prediction.
 
-## Requirements
+## Project Files
 
-Install the required Python packages:
+| Path | Purpose |
+| --- | --- |
+| `fetch_data.py` | Downloads historical SPY prices, engineers features, and exports the dataset. |
+| `prepare_dataset.py` | Alternate script for generating the same feature dataset. |
+| `run_execution.py` | Loads the saved model and runs the Alpaca paper-trading workflow. |
+| `Model/xgb_trading_model.pkl` | Serialized XGBoost classifier used for prediction. |
+| `Output_model/Equirt_curve_output.png` | Equity curve and backtest metrics from Kaggle. |
+| `requirements.txt` | Python package dependencies. |
+| `.gitignore` | Excludes local environments, secrets, caches, and generated CSV data. |
 
-```bash
-pip install yfinance pandas ta
+## Features and Target
+
+The dataset contains these model inputs:
+
+- `RSI` — 14-day Relative Strength Index
+- `MACD` — MACD difference
+- `ATR` — Average True Range
+- `Return_1D` — one-day close-to-close return
+- `Vol_Change` — one-day volume change
+- `RSI_lag1`, `Return_lag1` — previous-day indicator values
+
+`Target` is `1` when the following day's return is positive and `0` otherwise. The scripts drop rows made incomplete by rolling indicators and shifts.
+
+## Tools
+
+- **Python**, **pandas** — data preparation and tabular features
+- **yfinance** — historical and recent market data
+- **ta** — technical indicators
+- **XGBoost**, **scikit-learn**, **joblib** — classification model and serialization
+- **Kaggle Notebooks** — model training and backtest output
+- **Alpaca Trading API** (`alpaca-py`) — paper account and order submission
+- **python-dotenv** — local API credential loading
+
+## Setup
+
+Use Python 3.10 or newer. From the project folder, create and activate a virtual environment, then install the packages listed in `requirements.txt`:
+
+```powershell
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
 ```
 
-Recommended environment:
+Create a `.env` file in the project root with Alpaca **paper** credentials:
 
-- Python 3.9+
-- pandas
-- yfinance
-- ta
+```dotenv
+ALPACA_API_KEY=your_paper_api_key
+ALPACA_SECRET_KEY=your_paper_secret_key
+```
 
-## Usage
+Keep `.env` private and do not commit credentials. The checked-in execution client is initialized with `paper=True`.
 
-Run either of the data preparation scripts:
+## Run
 
-```bash
+Generate the feature CSV:
+
+```powershell
 python fetch_data.py
 ```
 
-or
+Alternatively, use `python prepare_dataset.py`. Both scripts download SPY daily data from 2020-01-01 through 2025-12-31 and write `trading_features_spy.csv` in the project root. The CSV is ignored by Git and can be uploaded to Kaggle for training.
 
-```bash
-python prepare_dataset.py
+After placing the trained model at `Model/xgb_trading_model.pkl` and configuring paper credentials, run:
+
+```powershell
+python run_execution.py
 ```
 
-Both scripts will:
+The execution script may submit a paper buy order or close a paper position based on the model signal. Review its behavior and verify the Alpaca account is in paper mode before running it.
 
-1. download SPY data from 2020-01-01 to 2026-01-01
-2. compute technical indicators
-3. clean invalid rows
-4. generate `trading_features_spy.csv`
+## Limitations
 
-## Output Dataset
-
-The exported CSV contains the final feature columns:
-
-- RSI
-- MACD
-- ATR
-- Return_1D
-- Vol_Change
-- RSI_lag1
-- Return_lag1
-- Target
-
-The target variable is defined as:
-
-- `1` if the next day’s return is positive
-- `0` if the next day’s return is negative or zero
-
-## Notes
-
-- This project currently focuses on data preparation rather than full model training or live trading execution.
-- The scripts are intentionally simple and easy to extend for experimentation with different feature sets, models, or time horizons.
-- The generated dataset is meant to be used as input for downstream ML training in a larger AI trading system.
-
-## Suggested Next Steps
-
-- train a classifier on the generated dataset
-- evaluate model performance with cross-validation
-- tune technical indicators and lag features
-- expand the pipeline to support additional tickers or multi-asset strategies
-
-## License
-
-This project does not currently include a specific license file. If you plan to share or publish it, add a license that matches your intended usage.
+- The Kaggle training notebook and reproducible train/test split are not included here.
+- Reported backtest performance is limited to the supplied screenshot; fees, slippage, and other risk statistics are not documented in the repository.
+- A classifier prediction is not a guarantee of future price direction.
