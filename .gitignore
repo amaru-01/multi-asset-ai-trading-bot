@@ -1,0 +1,28 @@
+# Python virtual environments
+venv/
+.venv/
+env/
+
+# Secrets and local environment settings
+.env
+.env.*
+!.env.example
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Generated market data
+/trading_features_spy.csv
+
+# Logs and temporary files
+*.log
+*.tmp
+
+# OS-generated files
+.DS_Store
+Thumbs.db
