@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+from typing import Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -12,10 +13,19 @@ TELEGRAM_API_BASE = "https://api.telegram.org"
 REQUEST_TIMEOUT_SECONDS = 10
 
 
-def send_telegram_message(message: str, parse_mode: str = "HTML") -> bool:
+def send_telegram_message(
+    message: str,
+    parse_mode: str = "HTML",
+    bot_token: Optional[str] = None,
+    chat_id: Optional[str] = None,
+) -> bool:
     """Send a Telegram message; return False without raising on any delivery issue."""
-    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    if bot_token is None:
+        bot_token = os.getenv("TELEGRAM_INSIGHTS_BOT_TOKEN") or os.getenv(
+            "TELEGRAM_BOT_TOKEN"
+        )
+    if chat_id is None:
+        chat_id = os.getenv("TELEGRAM_INSIGHTS_CHAT_ID") or os.getenv("TELEGRAM_CHAT_ID")
     if not bot_token or not chat_id:
         logger.info("Telegram notification skipped: credentials are not configured")
         return False

@@ -31,6 +31,8 @@ These figures are transcribed from the supplied output image. In that run, the s
 2. **Retrain:** `python retrain.py` downloads SPY, BTC-USD, and ETH-USD, selects a prediction cutoff using a training-only chronological validation slice, evaluates untouched holdouts, and exports each asset immediately when it passes Path A or Path B.
 3. **Execute:** `python run_execution.py` evaluates all configured assets in Alpaca paper mode. Use `python run_execution.py --symbol BTC-USD` to run only one asset.
 4. **Notify:** Telegram BUY, cleanup, and retraining reports are sent when `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are configured. Notification failures do not interrupt trading or retraining.
+5. **Daily Digest:** `python daily_digest.py` generates a Monday-Saturday market snapshot with 24h crypto stats, portfolio status, and current model signals. Requires `TELEGRAM_INSIGHTS_BOT_TOKEN` and `TELEGRAM_INSIGHTS_CHAT_ID`.
+6. **Weekly Insights:** `python weekly_insights.py` generates a Sunday newsletter with 7-day performance analysis, trading metrics, and model summaries. Requires `TELEGRAM_INSIGHTS_BOT_TOKEN` and `TELEGRAM_INSIGHTS_CHAT_ID`.
 
 ## Project Files
 
@@ -44,10 +46,15 @@ These figures are transcribed from the supplied output image. In that run, the s
 | `models/classifier.py` | Compatibility wrapper for legacy classifier artifacts. |
 | `retrain.py` | Per-asset training, holdout gates, percentile cutoff selection, and Telegram report. |
 | `run_execution.py` | Symbol-scoped Alpaca paper execution and Telegram trade/cleanup reports. |
-| `telegram_notifier.py` | Best-effort Telegram Bot API helper using `urllib`. |
+| `telegram_notifier.py` | Best-effort Telegram Bot API helper using `urllib`. Supports dual-bot routing with explicit token parameters. |
+| `daily_digest.py` | Generates Monday-Saturday market snapshots with 24h crypto stats, portfolio status, and model signals. |
+| `weekly_insights.py` | Generates Sunday newsletter with 7-day performance analysis, trading metrics, and model summaries. |
 | `fetch_data.py`, `prepare_dataset.py` | Legacy SPY one-day CSV preparation through the shared feature pipeline. |
 | `Model/*.json` | Native XGBoost model artifacts, updated per asset when its gate passes. |
 | `Output_model/` | Archived Kaggle charts and evaluation outputs. |
+| `.github/workflows/retrain_models.yml` | Automated weekly model retraining on Sundays with graceful failure handling. |
+| `.github/workflows/daily_digest.yml` | Scheduled daily digest Monday-Saturday at 08:00 UTC. |
+| `.github/workflows/weekly_insights.yml` | Scheduled weekly insights newsletter on Sundays at 18:00 UTC. |
 
 ## Features and Target
 
@@ -84,9 +91,11 @@ ALPACA_API_KEY=your_paper_api_key
 ALPACA_SECRET_KEY=your_paper_secret_key
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 TELEGRAM_CHAT_ID=your_telegram_chat_id
+TELEGRAM_INSIGHTS_BOT_TOKEN=your_insights_bot_token
+TELEGRAM_INSIGHTS_CHAT_ID=your_insights_chat_id
 ```
 
-Keep `.env` private and do not commit credentials. Store the same variable names as GitHub Actions secrets for scheduled runs. The execution client is initialized with `paper=True`.
+Keep `.env` private and do not commit credentials. Store the same variable names as GitHub Actions secrets for scheduled runs. The execution client is initialized with `paper=True`. The insights bot credentials are used for daily digest and weekly insights notifications.
 
 ## Run
 
@@ -108,6 +117,40 @@ python run_execution.py --symbol BTC-USD
 Regressor BUY signals use the artifact's persisted return cutoff. Crypto orders use USD notional; SPY orders use whole shares and ATR-based bracket exits. Legacy classifiers continue through the compatibility wrapper. Live prices are estimates and fills may differ because of market movement and slippage.
 
 On a HOLD signal, execution cancels pending symbol orders and closes any open position. Telegram notifications are best effort and never block order handling. Review account settings and signals before running; execution uses Alpaca paper mode.
+
+Generate daily market digest (Monday-Saturday):
+
+```powershell
+python daily_digest.py
+```
+
+This script fetches 24h stats for BTC-USD and ETH-USD, queries Alpaca for portfolio status, and reports current model signals to the insights bot.
+
+Generate weekly insights newsletter (Sunday):
+
+```powershell
+python weekly_insights.py
+```
+
+This script calculates 7-day performance metrics, analyzes trading history, and summarizes model performance in a detailed newsletter.
+
+## GitHub Actions Automation
+
+The repository includes three scheduled workflows for automated operation:
+
+| Workflow | Schedule | Purpose |
+| --- | --- | --- |
+| `retrain_models.yml` | Sundays at 00:00 UTC | Automated model retraining with graceful failure handling. Commits updated model artifacts even if some assets fail gates. |
+| `daily_digest.yml` | Monday-Saturday at 08:00 UTC | Sends daily market snapshots with crypto stats, portfolio status, and model signals. |
+| `weekly_insights.yml` | Sundays at 18:00 UTC | Sends weekly newsletter with 7-day analysis, trading metrics, and model summaries. |
+
+All workflows support manual triggering via `workflow_dispatch` and require the following GitHub Actions secrets:
+- `ALPACA_API_KEY`
+- `ALPACA_SECRET_KEY`
+- `TELEGRAM_BOT_TOKEN` (for retraining notifications)
+- `TELEGRAM_CHAT_ID` (for retraining notifications)
+- `TELEGRAM_INSIGHTS_BOT_TOKEN` (for digest and insights)
+- `TELEGRAM_INSIGHTS_CHAT_ID` (for digest and insights)
 
 ## Limitations
 
