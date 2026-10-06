@@ -1,4 +1,4 @@
-name: Automated SPY Trading Execution
+name: Automated Multi-Asset Trading Execution
 
 on:
   schedule:
