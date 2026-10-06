@@ -2,7 +2,7 @@ name: Automated SPY Trading Execution
 
 on:
   schedule:
-    - cron: '45 19 * * *' # Mon-Fri at 3:45 PM EST
+    - cron: '45 19 * * *' # Runs daily at 19:45 UTC (10:45 PM EAT)
   workflow_dispatch:
 
 jobs:
