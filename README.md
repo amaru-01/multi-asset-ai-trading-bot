@@ -1,4 +1,4 @@
-# SPY AI Trading Bot
+# Multi-Asset AI Trading Bot
 
 <p align="center">
 	<img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+">
@@ -7,7 +7,7 @@
 	<img src="https://img.shields.io/badge/Data-Yahoo%20Finance-6001D2" alt="Yahoo Finance data">
 </p>
 
-A Python research project for predicting the next-day direction of SPY (SPDR S&P 500 ETF Trust). It builds technical features from historical prices, uses an XGBoost classifier trained in Kaggle, and connects predictions to an Alpaca **paper-trading** account.
+A Python research and paper-trading system for SPY, Bitcoin, and Ethereum. It engineers shared market features, trains per-asset XGBoost regressors to estimate three-day forward returns, validates candidates on chronological holdouts, and connects eligible signals to an Alpaca **paper-trading** account.
 
 > This is an educational prototype, not investment advice. Backtest results are historical and do not predict future performance. The execution script is configured for Alpaca paper trading, not live trading.
 
@@ -27,42 +27,43 @@ These figures are transcribed from the supplied output image. In that run, the s
 
 ## Workflow
 
-1. **Prepare data:** download SPY daily prices and calculate features with `fetch_data.py` or `prepare_dataset.py`.
-2. **Train:** upload the generated CSV to Kaggle and train the XGBoost classifier there. The training notebook is not included in this repository.
-3. **Predict and paper trade:** `run_execution.py` downloads recent SPY data, recreates the model features, loads the saved classifier, and manages a paper position based on its prediction.
+1. **Engineer features:** `features/pipeline.py` normalizes daily OHLCV data and calculates the shared regression and legacy feature contracts.
+2. **Retrain:** `python retrain.py` downloads SPY, BTC-USD, and ETH-USD, selects a prediction cutoff using a training-only chronological validation slice, evaluates untouched holdouts, and exports each asset immediately when it passes Path A or Path B.
+3. **Execute:** `python run_execution.py` evaluates all configured assets in Alpaca paper mode. Use `python run_execution.py --symbol BTC-USD` to run only one asset.
+4. **Notify:** Telegram BUY, cleanup, and retraining reports are sent when `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are configured. Notification failures do not interrupt trading or retraining.
 
 ## Project Files
 
 | Path | Purpose |
 | --- | --- |
-| `fetch_data.py` | Downloads historical SPY prices, engineers features, and exports the dataset. |
-| `prepare_dataset.py` | Alternate script for generating the same feature dataset. |
-| `run_execution.py` | Loads the saved model and runs the Alpaca paper-trading workflow. |
-| `Model/xgb_trading_model.json` | Native XGBoost classifier model used for prediction. Export this from Kaggle after training. |
-| `Output_model/Equirt_curve_output.png` | Equity curve and backtest metrics from Kaggle. |
-| `requirements.txt` | Python package dependencies. |
-| `.gitignore` | Excludes local environments, secrets, caches, and generated CSV data. |
+| `config.py` | Asset definitions, artifact paths, feature references, model settings, and environment variable names. |
+| `features/contract.py` | Current five-feature regression schema and legacy classifier schemas. |
+| `features/pipeline.py` | Shared OHLCV normalization, regression feature engineering, and legacy dataset generation. |
+| `models/base_model.py` | Common fit, signal, and artifact interface. |
+| `models/regressor.py` | Three-day return regressor and persisted per-model decision threshold. |
+| `models/classifier.py` | Compatibility wrapper for legacy classifier artifacts. |
+| `retrain.py` | Per-asset training, holdout gates, percentile cutoff selection, and Telegram report. |
+| `run_execution.py` | Symbol-scoped Alpaca paper execution and Telegram trade/cleanup reports. |
+| `telegram_notifier.py` | Best-effort Telegram Bot API helper using `urllib`. |
+| `fetch_data.py`, `prepare_dataset.py` | Legacy SPY one-day CSV preparation through the shared feature pipeline. |
+| `Model/*.json` | Native XGBoost model artifacts, updated per asset when its gate passes. |
+| `Output_model/` | Archived Kaggle charts and evaluation outputs. |
 
 ## Features and Target
 
-The dataset contains these model inputs:
+The current regression contract uses the same five ordered inputs for each asset: `SMA_20_50_Ratio`, `ATR_Normalized`, `RSI_14`, `ROC_5`, and `SPY_ROC_5`. The shared pipeline computes the benchmark feature from SPY closes and uses each asset's own OHLCV for the remaining indicators.
 
-- `RSI` — 14-day Relative Strength Index
-- `MACD` — MACD difference
-- `ATR` — Average True Range
-- `Return_1D` — one-day close-to-close return
-- `Vol_Change` — one-day volume change
-- `RSI_lag1`, `Return_lag1` — previous-day indicator values
+The model target is the three-day forward return, `(Close[t+3] - Close[t]) / Close[t]`. Holdout direction is positive when that return exceeds `0.5%`; predicted returns are converted to signals using the cutoff stored in each model's JSON attributes. Rolling-window rows and the final three unlabeled rows are excluded from training.
 
-`Target` is `1` when the following day's return is positive and `0` otherwise. The scripts drop rows made incomplete by rolling indicators and shifts.
+Legacy classifier artifacts remain loadable with their historical feature contracts until replaced by a passing regressor artifact.
 
 ## Tools
 
 - **Python**, **pandas** — data preparation and tabular features
 - **yfinance** — historical and recent market data
 - **ta** — technical indicators
-- **XGBoost**, **scikit-learn** — classification model and native JSON serialization
-- **Kaggle Notebooks** — model training and backtest output
+- **XGBoost**, **scikit-learn** — regression/classification models and native JSON serialization
+- **Telegram Bot API** — optional HTML notifications
 - **Alpaca Trading API** (`alpaca-py`) — paper account and order submission
 - **python-dotenv** — local API credential loading
 
@@ -81,49 +82,39 @@ Create a `.env` file in the project root with Alpaca **paper** credentials:
 ```dotenv
 ALPACA_API_KEY=your_paper_api_key
 ALPACA_SECRET_KEY=your_paper_secret_key
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+TELEGRAM_CHAT_ID=your_telegram_chat_id
 ```
 
-Keep `.env` private and do not commit credentials. The checked-in execution client is initialized with `paper=True`.
+Keep `.env` private and do not commit credentials. Store the same variable names as GitHub Actions secrets for scheduled runs. The execution client is initialized with `paper=True`.
 
 ## Run
 
-Generate the feature CSV:
+Run per-asset chronological retraining and holdout evaluation:
 
 ```powershell
-python fetch_data.py
+python retrain.py
 ```
 
-Alternatively, use `python prepare_dataset.py`. Both scripts download SPY daily data from 2020-01-01 through 2025-12-31 and write `trading_features_spy.csv` in the project root. The CSV is ignored by Git and can be uploaded to Kaggle for training.
+Each artifact is updated immediately when that asset passes either gate: Path A requires accuracy more than 1.5 percentage points above its holdout majority baseline and ROC-AUC above 0.52; Path B requires ROC-AUC at least 0.54 and accuracy no worse than 2 points below the baseline. A failed asset retains its existing artifact. The command returns nonzero if any asset fails or cannot be evaluated.
 
-### Export the trained model
-
-In the Kaggle notebook, save the fitted XGBoost classifier in native JSON format and download or copy it into `Model/xgb_trading_model.json` in this repository:
-
-```python
-# `model` is the fitted xgboost.XGBClassifier used for training.
-model.save_model("xgb_trading_model.json")
-```
-
-This format avoids loading the estimator through Python pickle. Keep the training feature names and order identical to `FEATURE_COLUMNS` in `run_execution.py`.
-
-### Run the paper trader
-
-After placing the JSON model at `Model/xgb_trading_model.json` and configuring paper credentials, run:
+Run paper execution for all assets or select one:
 
 ```powershell
 python run_execution.py
+python run_execution.py --symbol BTC-USD
 ```
 
-On a buy signal, the script submits an Alpaca bracket market order with a take-profit limit 1.5% above and a stop-loss 1.0% below the latest yfinance close, rounded to cents. Alpaca bracket orders require whole-share quantities, so the dollar allocation is rounded down to an integer number of shares. The latest close is an estimate, not a guaranteed fill price; market slippage means the actual exits may not be exactly 1.5% and 1.0% from the fill.
+Regressor BUY signals use the artifact's persisted return cutoff. Crypto orders use USD notional; SPY orders use whole shares and ATR-based bracket exits. Legacy classifiers continue through the compatibility wrapper. Live prices are estimates and fills may differ because of market movement and slippage.
 
-On a non-buy signal, it cancels open orders for the symbol, waits for cancellation to settle, and closes any open position. Errors are timestamped in the log and return a non-zero process status for GitHub Actions. The script is hard-coded for Alpaca paper mode; review signals and account settings before running it.
+On a HOLD signal, execution cancels pending symbol orders and closes any open position. Telegram notifications are best effort and never block order handling. Review account settings and signals before running; execution uses Alpaca paper mode.
 
 ## Limitations
 
-- The Kaggle training notebook and reproducible train/test split are not included here.
-- The JSON model artifact must be exported from the Kaggle training notebook and placed in `Model/` before execution; the previous `.pkl` artifact is no longer loaded.
+- Historical Kaggle training notebooks and charts are archival; current models are trained by `retrain.py`.
+- Model quality gates can fail because market returns are noisy. In that case the previous model remains active for that asset.
 - Reported backtest performance is limited to the supplied screenshot; fees, slippage, and other risk statistics are not documented in the repository.
-- A classifier prediction is not a guarantee of future price direction.
+- Regression outputs and percentile cutoffs are not guarantees of future returns.
 
 ## Kaggle Model Prediction Curves
 
