@@ -2,21 +2,31 @@ name: Automated Multi-Asset Trading Execution
 
 on:
   schedule:
-    - cron: '0 */2 * * *' # Runs at minute 0 of every 2nd hour, 24/7
+    - cron: '7 */2 * * *' # Every 2 hours, 24/7 (offset to minute 7 to avoid top-of-hour congestion)
   workflow_dispatch:
+
+# Only one trading run at a time; never cancel a run that is mid-trade
+concurrency:
+  group: trading-bot
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
   trade:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Check out repository code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: pip
 
       - name: Install dependencies
         run: |
@@ -44,8 +54,9 @@ jobs:
           to: ${{ secrets.NOTIFICATION_EMAIL }}
           from: "GitHub Trading Bot <${{ secrets.NOTIFICATION_EMAIL }}>"
           body: |
-            The SPY Trading Bot workflow completed with status: ${{ job.status }}.
-            
+            The Multi-Asset Trading Bot workflow completed with status: ${{ job.status }}.
+
             Repository: ${{ github.repository }}
+            Trigger: ${{ github.event_name }}
             Run ID: ${{ github.run_id }}
             View full log: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
