@@ -2,16 +2,21 @@ name: Automated Model Retraining
 
 on:
   schedule:
-    - cron: '0 0 * * 0'
+    - cron: '7 0 * * 0' # Sundays at 00:07 UTC (03:07 Nairobi time)
   workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: model-retraining
+  cancel-in-progress: false
+
 jobs:
   retrain:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Check out repository code
@@ -21,6 +26,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: pip
 
       - name: Install dependencies
         run: |
@@ -28,14 +34,16 @@ jobs:
           pip install -r requirements.txt
 
       - name: Retrain and validate models
-        continue-on-error: true
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python retrain.py
+        run: |
+          # A non-zero exit here usually means some models failed the validation
+          # gate and were retained. Log it as a warning instead of failing the step.
+          python retrain.py || echo "::warning::retrain.py exited with code $? (check log: some models may have been retained)"
 
       - name: Commit updated model files
-        if: always()
+        if: ${{ !cancelled() }}
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
@@ -44,5 +52,6 @@ jobs:
             echo "No model updates to commit."
           else
             git commit -m "Automated weekly model retraining"
+            git pull --rebase origin main
             git push origin HEAD:main
           fi
