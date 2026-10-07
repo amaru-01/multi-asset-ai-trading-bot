@@ -2,15 +2,20 @@ name: Weekly Insights Newsletter
 
 on:
   schedule:
-    - cron: '0 18 * * 0'
+    - cron: '3 16 * * 0' # Sundays at 16:03 UTC = 19:03 Nairobi time (EAT, UTC+3)
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: weekly-insights
+  cancel-in-progress: false
+
 jobs:
   weekly_insights:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Check out repository code
@@ -20,6 +25,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: pip
 
       - name: Install dependencies
         run: |
