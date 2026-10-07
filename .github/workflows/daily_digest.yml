@@ -2,15 +2,20 @@ name: Daily Market Digest
 
 on:
   schedule:
-    - cron: '0 5 * * 1-6'
+    - cron: '3 5 * * *' # Every day at 05:03 UTC = 08:03 Nairobi time (EAT, UTC+3)
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: daily-digest
+  cancel-in-progress: false
+
 jobs:
   daily_digest:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Check out repository code
@@ -20,6 +25,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: pip
 
       - name: Install dependencies
         run: |
