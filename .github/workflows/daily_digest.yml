@@ -2,11 +2,15 @@ name: Daily Market Digest
 
 on:
   schedule:
-    - cron: '3 5 * * *' # Every day at 05:03 UTC = 08:03 Nairobi time (EAT, UTC+3)
+    # FALLBACK ONLY. The primary trigger is an external timer calling workflow_dispatch
+    # at 05:00 UTC (08:00 Nairobi). This fires 33 minutes later and skips itself
+    # if a run already happened in the last 3 hours.
+    - cron: '33 5 * * *'
   workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: daily-digest
@@ -18,21 +22,45 @@ jobs:
     timeout-minutes: 15
 
     steps:
+      - name: Skip fallback run if a run already happened recently
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Manual and external (workflow_dispatch) runs always execute
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          cutoff=$(date -u -d '180 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
+          recent=$(gh api "repos/${{ github.repository }}/actions/workflows/daily_digest.yml/runs?per_page=20" \
+            --jq "[.workflow_runs[] | select(.id != ${{ github.run_id }}) | select(.created_at > \"$cutoff\") | select(.status != \"completed\" or .conclusion == \"success\")] | length")
+          if [ "$recent" -gt 0 ]; then
+            echo "A run already happened in the last 3 hours; skipping fallback run."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Check out repository code
+        if: steps.guard.outputs.skip != 'true'
         uses: actions/checkout@v4
 
       - name: Set up Python 3.11
+        if: steps.guard.outputs.skip != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: pip
 
       - name: Install dependencies
+        if: steps.guard.outputs.skip != 'true'
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Run daily digest
+        if: steps.guard.outputs.skip != 'true'
         env:
           TELEGRAM_INSIGHTS_BOT_TOKEN: ${{ secrets.TELEGRAM_INSIGHTS_BOT_TOKEN }}
           TELEGRAM_INSIGHTS_CHAT_ID: ${{ secrets.TELEGRAM_INSIGHTS_CHAT_ID }}
