@@ -10,6 +10,7 @@ import math
 import os
 import sys
 import time
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from html import escape
 from pathlib import Path
@@ -52,6 +53,12 @@ RISK_FACTOR = 0.01
 MAX_POSITION_EQUITY_FRACTION = 0.25
 CANCEL_TIMEOUT_SECONDS = 10
 CANCEL_POLL_INTERVAL_SECONDS = 0.5
+# Crypto has no bracket orders on Alpaca, so exits are checked by the bot itself:
+# close a crypto position when price falls this many ATRs below its entry price.
+STOP_LOSS_ATR_MULTIPLE = 1.5
+# After any filled SELL on a symbol (stop-loss, HOLD close, manual close, SPY
+# bracket exit), do not re-enter for this many hours. Set to 0 to disable.
+COOLDOWN_HOURS = 6
 _SPY_CLOSE_CACHE: pd.Series | None = None
 
 
@@ -200,6 +207,45 @@ def close_position_if_open(trading_client: TradingClient, symbol: str) -> bool:
     return True
 
 
+def get_position_value(trading_client: TradingClient, symbol: str) -> float:
+    """Total market value held in a symbol (0.0 if none), tolerating symbol formats."""
+    target = _norm_symbol(symbol)
+    return sum(
+        abs(float(position.market_value or 0))
+        for position in trading_client.get_all_positions()
+        if _norm_symbol(position.symbol) == target
+    )
+
+
+def get_recent_exit(trading_client: TradingClient, symbol: str, hours: float):
+    """Return the most recent filled SELL for a symbol within the last `hours`, if any."""
+    request = GetOrdersRequest(
+        status=QueryOrderStatus.CLOSED,
+        symbols=[symbol],
+        side=OrderSide.SELL,
+        after=datetime.now(timezone.utc) - timedelta(hours=hours),
+        limit=50,
+    )
+    return next(
+        (
+            order
+            for order in trading_client.get_orders(filter=request)
+            if float(order.filled_qty or 0) > 0
+        ),
+        None,
+    )
+
+
+def stop_loss_triggered(
+    position, reference_price: float, current_atr: float
+) -> tuple[bool, float, float, float]:
+    """Check the ATR stop. Returns (hit, entry_price, current_price, stop_price)."""
+    entry_price = float(position.avg_entry_price)
+    current_price = float(position.current_price or reference_price)
+    stop_price = entry_price - STOP_LOSS_ATR_MULTIPLE * current_atr
+    return current_price <= stop_price, entry_price, current_price, stop_price
+
+
 def _signal_details(model, signal: dict) -> tuple[str, str]:
     """Return display model type and predicted value/cutoff text."""
     if isinstance(model, XGBRegressorModel):
@@ -241,6 +287,34 @@ def execute_asset(
         result["threshold"],
     )
 
+    # Bot-side stop-loss for crypto (SPY already has an exchange-side bracket stop).
+    if asset["type"] == "crypto":
+        held = get_open_position(trading_client, alpaca_symbol)
+        if held is not None:
+            hit, entry_price, current_price, stop_price = stop_loss_triggered(
+                held, reference_price, current_atr
+            )
+            if hit:
+                cancel_open_orders(trading_client, alpaca_symbol)
+                close_position_if_open(trading_client, alpaca_symbol)
+                logger.warning(
+                    "Stop-loss triggered ticker=%s entry=%.2f price=%.2f stop=%.2f",
+                    asset["ticker"],
+                    entry_price,
+                    current_price,
+                    stop_price,
+                )
+                send_telegram_message(
+                    f"<b>STOP-LOSS TRIGGERED</b> [{mode_label()}]\n"
+                    f"<b>Symbol:</b> {escape(asset['ticker'])}\n"
+                    f"<b>Entry price:</b> ${entry_price:,.2f}\n"
+                    f"<b>Current price:</b> ${current_price:,.2f}\n"
+                    f"<b>Stop level:</b> ${stop_price:,.2f} "
+                    f"({STOP_LOSS_ATR_MULTIPLE} ATR below entry)\n"
+                    "<b>Position:</b> Close submitted"
+                )
+                return
+
     if result["signal"] != "BUY":
         cancelled = cancel_open_orders(trading_client, alpaca_symbol)
         closed = close_position_if_open(trading_client, alpaca_symbol)
@@ -264,6 +338,32 @@ def execute_asset(
         )
         return
 
+    if COOLDOWN_HOURS > 0:
+        recent_exit = get_recent_exit(trading_client, alpaca_symbol, COOLDOWN_HOURS)
+        if recent_exit is not None:
+            logger.info(
+                "Skipping buy during cooldown ticker=%s last_exit_order=%s filled_at=%s "
+                "cooldown_hours=%s",
+                asset["ticker"],
+                recent_exit.id,
+                recent_exit.filled_at,
+                COOLDOWN_HOURS,
+            )
+            return
+
+    # Independent exposure cap: never let one asset exceed its equity fraction,
+    # even if the duplicate-position check above is ever bypassed.
+    existing_value = get_position_value(trading_client, alpaca_symbol)
+    exposure_room = equity * MAX_POSITION_EQUITY_FRACTION - existing_value
+    if exposure_room <= 0:
+        logger.warning(
+            "Skipping buy: exposure cap reached ticker=%s held=%.2f cap=%.2f",
+            asset["ticker"],
+            existing_value,
+            equity * MAX_POSITION_EQUITY_FRACTION,
+        )
+        return
+
     normalized_atr = current_atr / reference_price
     if not math.isfinite(normalized_atr) or normalized_atr <= 0:
         raise ValueError(f"Invalid normalized ATR for {asset['ticker']}")
@@ -277,7 +377,7 @@ def execute_asset(
         confidence_scale = 0.5 if result["raw_prediction"] <= 0.62 else 1.0
 
     risk_sized_value = equity * RISK_FACTOR / normalized_atr
-    max_position_value = min(equity * MAX_POSITION_EQUITY_FRACTION, buying_power)
+    max_position_value = min(exposure_room, buying_power)
     allocation = min(risk_sized_value * confidence_scale, max_position_value)
     if not math.isfinite(allocation) or allocation <= 0:
         raise ValueError(f"Calculated position value is invalid for {asset['ticker']}")
