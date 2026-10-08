@@ -1,4 +1,8 @@
-"""Paper execution orchestration for regression and legacy classifier models."""
+"""Execution orchestration for regression and legacy classifier models.
+
+Runs against the Alpaca paper account by default. Live trading is only used
+when the ALPACA_PAPER environment variable is explicitly set to "false".
+"""
 
 import argparse
 import logging
@@ -51,15 +55,29 @@ CANCEL_POLL_INTERVAL_SECONDS = 0.5
 _SPY_CLOSE_CACHE: pd.Series | None = None
 
 
+def is_paper_mode() -> bool:
+    """Paper trading unless ALPACA_PAPER is explicitly set to "false"."""
+    return os.getenv("ALPACA_PAPER", "true").strip().lower() != "false"
+
+
+def mode_label() -> str:
+    return "PAPER" if is_paper_mode() else "LIVE"
+
+
 def create_trading_client() -> TradingClient:
-    """Create an Alpaca paper client using standard environment credentials."""
+    """Create an Alpaca client (paper by default) using environment credentials."""
     api_key = os.getenv(ALPACA_API_KEY_ENV)
     secret_key = os.getenv(ALPACA_SECRET_KEY_ENV)
     if not api_key or not secret_key:
         raise ValueError(
             f"{ALPACA_API_KEY_ENV} and {ALPACA_SECRET_KEY_ENV} must be set"
         )
-    return TradingClient(api_key, secret_key, paper=True)
+    return TradingClient(api_key, secret_key, paper=is_paper_mode())
+
+
+def _norm_symbol(symbol: str) -> str:
+    """Normalize 'ETH/USD' (orders) and 'ETHUSD' (positions) to one form."""
+    return symbol.replace("/", "").upper()
 
 
 def get_spy_close_history() -> pd.Series:
@@ -151,8 +169,18 @@ def cancel_open_orders(trading_client: TradingClient, symbol: str) -> bool:
 
 
 def get_open_position(trading_client: TradingClient, symbol: str):
+    """Find an open position, tolerating Alpaca's crypto symbol formats.
+
+    Orders use 'ETH/USD' but the positions list reports 'ETHUSD', so compare
+    normalized symbols instead of raw strings.
+    """
+    target = _norm_symbol(symbol)
     return next(
-        (position for position in trading_client.get_all_positions() if position.symbol == symbol),
+        (
+            position
+            for position in trading_client.get_all_positions()
+            if _norm_symbol(position.symbol) == target
+        ),
         None,
     )
 
@@ -161,10 +189,11 @@ def close_position_if_open(trading_client: TradingClient, symbol: str) -> bool:
     position = get_open_position(trading_client, symbol)
     if position is None:
         return False
-    order = trading_client.close_position(symbol)
+    # Use the symbol exactly as Alpaca reports it for the position.
+    order = trading_client.close_position(position.symbol)
     logger.info(
         "Position close submitted symbol=%s order_id=%s status=%s",
-        symbol,
+        position.symbol,
         order.id,
         order.status,
     )
@@ -193,7 +222,7 @@ def execute_asset(
     equity: float,
     buying_power: float,
 ) -> None:
-    """Evaluate a signal, manage the paper position, and notify Telegram."""
+    """Evaluate a signal, manage the position, and notify Telegram."""
     feature_columns = model.feature_names or asset["feature_columns"]
     latest_features, reference_price, current_atr = get_latest_features(
         asset["ticker"], feature_columns
@@ -216,7 +245,7 @@ def execute_asset(
         cancelled = cancel_open_orders(trading_client, alpaca_symbol)
         closed = close_position_if_open(trading_client, alpaca_symbol)
         send_telegram_message(
-            "<b>POSITION CLEANUP</b>\n"
+            f"<b>POSITION CLEANUP</b> [{mode_label()}]\n"
             f"<b>Symbol:</b> {escape(asset['ticker'])}\n"
             f"<b>Signal:</b> HOLD ({escape(signal_text)})\n"
             f"<b>Pending orders:</b> {'Cancelled' if cancelled else 'None pending'}\n"
@@ -305,7 +334,7 @@ def execute_asset(
         order_value,
     )
     send_telegram_message(
-        "<b>BUY SIGNAL EXECUTED</b>\n"
+        f"<b>BUY SIGNAL EXECUTED</b> [{mode_label()}]\n"
         f"<b>Symbol:</b> {escape(asset['ticker'])}\n"
         "<b>Direction:</b> BUY\n"
         f"<b>Model type:</b> {escape(model_type)}\n"
@@ -319,7 +348,7 @@ def execute_asset(
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Execute paper trades from model signals")
+    parser = argparse.ArgumentParser(description="Execute trades from model signals")
     parser.add_argument(
         "--symbol",
         help="Optional ticker to process (e.g. BTC-USD, SPY, or ETH-USD)",
@@ -345,17 +374,18 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Execute requested assets serially using Alpaca paper trading."""
+    """Execute requested assets serially using the configured Alpaca account."""
     arguments = _parse_args(argv)
     try:
         trading_client = create_trading_client()
         account = trading_client.get_account()
     except Exception:
-        logger.exception("Unable to initialize or query Alpaca paper account")
+        logger.exception("Unable to initialize or query Alpaca %s account", mode_label())
         return 1
 
     logger.info(
-        "Alpaca paper account status=%s equity=%s buying_power=%s",
+        "Alpaca %s account status=%s equity=%s buying_power=%s",
+        mode_label(),
         account.status,
         account.equity,
         account.buying_power,
@@ -388,7 +418,7 @@ def main(argv: list[str] | None = None) -> int:
     if had_asset_failure:
         logger.error("One or more requested assets failed execution")
         return 1
-    logger.info("Paper execution completed assets=%s", [item["ticker"] for item in arguments.assets])
+    logger.info("%s execution completed assets=%s", mode_label(), [item["ticker"] for item in arguments.assets])
     return 0
 
 
