@@ -59,6 +59,17 @@ STOP_LOSS_ATR_MULTIPLE = 1.5
 # After any filled SELL on a symbol (stop-loss, HOLD close, manual close, SPY
 # bracket exit), do not re-enter for this many hours. Set to 0 to disable.
 COOLDOWN_HOURS = 6
+# Round trips cost ~0.5% in fees (Alpaca crypto charges ~0.25% per side), so a new
+# position is only opened when the prediction clears the model's own threshold by
+# a margin. Exits still use the model's threshold, which leaves a hysteresis band.
+CLASSIFIER_ENTRY_MIN = 0.60  # minimum up-probability to open a position
+REGRESSOR_ENTRY_MIN = 0.006  # minimum predicted 3-day return (0.6%) to open one
+# A HOLD signal may not close a position opened less than this many hours ago.
+# The crypto stop-loss is exempt. Set to 0 to disable.
+MIN_HOLD_HOURS = 8
+# The models are trained on finished daily candles, so build signals from
+# completed bars only (today's still-forming bar is dropped before features).
+USE_COMPLETED_BARS = True
 _SPY_CLOSE_CACHE: pd.Series | None = None
 
 
@@ -87,6 +98,27 @@ def _norm_symbol(symbol: str) -> str:
     return symbol.replace("/", "").upper()
 
 
+def drop_partial_bar(data: pd.DataFrame, label: str) -> pd.DataFrame:
+    """Drop today's still-forming daily bar so signals use completed candles only.
+
+    Falls back to returning the data unchanged (with a warning) if the index is
+    not a DatetimeIndex, so a format surprise never breaks trading.
+    """
+    if not USE_COMPLETED_BARS or len(data) < 2:
+        return data
+    if not isinstance(data.index, pd.DatetimeIndex):
+        logger.warning("Cannot detect partial bar, index is not dates label=%s", label)
+        return data
+    last = data.index[-1]
+    if last.tzinfo is not None:
+        last = last.tz_localize(None)
+    today = pd.Timestamp(datetime.now(timezone.utc).date())
+    if last.normalize() >= today:
+        logger.info("Dropped partial daily bar label=%s bar_date=%s", label, last.date())
+        return data.iloc[:-1]
+    return data
+
+
 def get_spy_close_history() -> pd.Series:
     """Fetch one year of SPY closes for the shared benchmark feature."""
     global _SPY_CLOSE_CACHE
@@ -101,7 +133,9 @@ def get_spy_close_history() -> pd.Series:
         )
         if response is None or response.empty:
             raise ValueError("yfinance returned no SPY data for benchmark feature")
-        normalized = normalize_market_columns(response)
+        normalized = drop_partial_bar(
+            normalize_market_columns(response), "SPY-benchmark"
+        )
         _SPY_CLOSE_CACHE = pd.to_numeric(normalized["Close"], errors="coerce")
     return _SPY_CLOSE_CACHE
 
@@ -123,16 +157,22 @@ def get_latest_features(
         if response is None or response.empty:
             raise ValueError(f"yfinance returned no data for {ticker}")
         market_data = normalize_market_columns(response)
+        # Latest traded price (including today's forming bar) is used for sizing
+        # and the bracket levels; the signal itself uses completed bars only.
+        latest_price = float(
+            pd.to_numeric(market_data["Close"], errors="coerce").dropna().iloc[-1]
+        )
+        signal_data = drop_partial_bar(market_data, ticker)
         spy_close = (
-            pd.to_numeric(market_data["Close"], errors="coerce")
+            pd.to_numeric(signal_data["Close"], errors="coerce")
             if ticker == "SPY"
             else get_spy_close_history()
         )
-        frame = build_inference_features(market_data, feature_columns, spy_close)
+        frame = build_inference_features(signal_data, feature_columns, spy_close)
         if frame.empty:
             raise ValueError(f"Insufficient valid feature history for {ticker}")
         latest_features = frame.loc[:, feature_columns].tail(1).astype(float)
-        reference_price = float(frame["Close"].iloc[-1])
+        reference_price = latest_price
         current_atr = float(frame["ATR_14"].iloc[-1])
         if not math.isfinite(reference_price) or reference_price <= 0:
             raise ValueError(f"Invalid reference price for {ticker}: {reference_price}")
@@ -217,12 +257,24 @@ def get_position_value(trading_client: TradingClient, symbol: str) -> float:
     )
 
 
-def get_recent_exit(trading_client: TradingClient, symbol: str, hours: float):
-    """Return the most recent filled SELL for a symbol within the last `hours`, if any."""
+def entry_margin_required(model, result: dict) -> float:
+    """Prediction needed to open a new position (never below the model's own threshold)."""
+    floor = (
+        REGRESSOR_ENTRY_MIN
+        if isinstance(model, XGBRegressorModel)
+        else CLASSIFIER_ENTRY_MIN
+    )
+    return max(float(result["threshold"]), floor)
+
+
+def get_recent_filled_order(
+    trading_client: TradingClient, symbol: str, side: OrderSide, hours: float
+):
+    """Return the most recent filled order on `side` submitted within `hours`, if any."""
     request = GetOrdersRequest(
         status=QueryOrderStatus.CLOSED,
         symbols=[symbol],
-        side=OrderSide.SELL,
+        side=side,
         after=datetime.now(timezone.utc) - timedelta(hours=hours),
         limit=50,
     )
@@ -316,15 +368,38 @@ def execute_asset(
                 return
 
     if result["signal"] != "BUY":
+        # Don't let a marginal signal flip close a position that was only just
+        # opened. This also leaves SPY's bracket stop/take-profit orders in place.
+        # The crypto stop-loss above is unaffected.
+        if (
+            MIN_HOLD_HOURS > 0
+            and get_open_position(trading_client, alpaca_symbol) is not None
+        ):
+            recent_entry = get_recent_filled_order(
+                trading_client, alpaca_symbol, OrderSide.BUY, MIN_HOLD_HOURS
+            )
+            if recent_entry is not None:
+                logger.info(
+                    "Holding through HOLD signal (minimum hold) ticker=%s "
+                    "entry_order=%s submitted_at=%s min_hold_hours=%s",
+                    asset["ticker"],
+                    recent_entry.id,
+                    recent_entry.submitted_at,
+                    MIN_HOLD_HOURS,
+                )
+                return
         cancelled = cancel_open_orders(trading_client, alpaca_symbol)
         closed = close_position_if_open(trading_client, alpaca_symbol)
-        send_telegram_message(
-            f"<b>POSITION CLEANUP</b> [{mode_label()}]\n"
-            f"<b>Symbol:</b> {escape(asset['ticker'])}\n"
-            f"<b>Signal:</b> HOLD ({escape(signal_text)})\n"
-            f"<b>Pending orders:</b> {'Cancelled' if cancelled else 'None pending'}\n"
-            f"<b>Position:</b> {'Close submitted' if closed else 'No open position'}"
-        )
+        if cancelled or closed:
+            send_telegram_message(
+                f"<b>POSITION CLEANUP</b> [{mode_label()}]\n"
+                f"<b>Symbol:</b> {escape(asset['ticker'])}\n"
+                f"<b>Signal:</b> HOLD ({escape(signal_text)})\n"
+                f"<b>Pending orders:</b> {'Cancelled' if cancelled else 'None pending'}\n"
+                f"<b>Position:</b> {'Close submitted' if closed else 'No open position'}"
+            )
+        else:
+            logger.info("HOLD signal, nothing to clean up ticker=%s", asset["ticker"])
         return
 
     open_orders = get_open_orders(trading_client, alpaca_symbol)
@@ -338,8 +413,20 @@ def execute_asset(
         )
         return
 
+    required = entry_margin_required(model, result)
+    if float(result["raw_prediction"]) < required:
+        logger.info(
+            "Skipping buy: below entry margin ticker=%s prediction=%.4f required=%.4f",
+            asset["ticker"],
+            float(result["raw_prediction"]),
+            required,
+        )
+        return
+
     if COOLDOWN_HOURS > 0:
-        recent_exit = get_recent_exit(trading_client, alpaca_symbol, COOLDOWN_HOURS)
+        recent_exit = get_recent_filled_order(
+            trading_client, alpaca_symbol, OrderSide.SELL, COOLDOWN_HOURS
+        )
         if recent_exit is not None:
             logger.info(
                 "Skipping buy during cooldown ticker=%s last_exit_order=%s filled_at=%s "
@@ -440,7 +527,7 @@ def execute_asset(
         f"<b>Model type:</b> {escape(model_type)}\n"
         f"<b>Signal:</b> {escape(signal_text)}\n"
         f"<b>Reference price:</b> ${reference_price:,.2f}\n"
-        f"<b>Position size:</b> {order_size}\n"
+        f"<b>Order size (requested):</b> {order_size}\n"
         f"<b>Account equity:</b> ${equity:,.2f}\n"
         f"<b>Buying power remaining:</b> ${buying_power_remaining:,.2f}\n"
         f"<b>Order:</b> {escape(str(order.id))} ({escape(str(order.status))})"
