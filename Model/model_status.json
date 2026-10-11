@@ -1,0 +1,122 @@
+{
+  "assets": {
+    "BTC-USD": {
+      "buying": "blocked",
+      "candidate": {
+        "accuracy": 0.5549295774647888,
+        "backtest_mean_net": -0.010163864266708542,
+        "backtest_trades": 10,
+        "decision_threshold": 0.0014079032698646188,
+        "entry_bar": 0.006,
+        "gate_path": "FAIL-EVIDENCE",
+        "majority_baseline": 0.5690140845070423,
+        "prediction_quantiles": {
+          "p50": 0.0018743142718449235,
+          "p75": 0.004114991286769509,
+          "p90": 0.010107917524874213,
+          "p95": 0.012878665514290333,
+          "p99": 0.022819405272603024
+        },
+        "roc_auc": 0.5438749757328675,
+        "wf_folds": 4,
+        "wf_mean_auc": 0.4955092440761375,
+        "wf_positive_folds": 1
+      },
+      "checked_at": "2026-10-11T09:49:54+00:00",
+      "incumbent": {
+        "backtest": {
+          "mean_net": 0.07043933948067937,
+          "passes": false,
+          "total_net": 0.42263603688407625,
+          "trades": 6,
+          "win_rate": 0.6666666666666666
+        },
+        "entry_bar": 0.006,
+        "model_type": "3-Day Regressor",
+        "rows": 355,
+        "threshold": 0.001465159934014082
+      },
+      "live_model": "3-Day Regressor (existing)",
+      "reason": "no model passed: candidate rejected and existing 3-Day Regressor fails the net-of-cost back-test (6 trades, mean net +7.04% per trade)"
+    },
+    "ETH-USD": {
+      "buying": "blocked",
+      "candidate": {
+        "accuracy": 0.476056338028169,
+        "backtest_mean_net": -0.03183978800031119,
+        "backtest_trades": 17,
+        "decision_threshold": 0.00047739275032654405,
+        "entry_bar": 0.006,
+        "gate_path": "FAIL",
+        "majority_baseline": 0.571830985915493,
+        "prediction_quantiles": {
+          "p50": 0.002428628271445632,
+          "p75": 0.006332519929856062,
+          "p90": 0.009818398952484136,
+          "p95": 0.012441956996917728,
+          "p99": 0.016659669838845714
+        },
+        "roc_auc": 0.47865893181228936,
+        "wf_folds": 4,
+        "wf_mean_auc": 0.48770364927938015,
+        "wf_positive_folds": 1
+      },
+      "checked_at": "2026-10-11T09:49:54+00:00",
+      "incumbent": {
+        "backtest": {
+          "mean_net": -0.006192070831873726,
+          "passes": false,
+          "total_net": -0.024768283327494905,
+          "trades": 4,
+          "win_rate": 0.5
+        },
+        "entry_bar": 0.6,
+        "model_type": "Legacy Classifier",
+        "rows": 355,
+        "threshold": 0.55
+      },
+      "live_model": "Legacy Classifier (existing)",
+      "reason": "no model passed: candidate rejected and existing Legacy Classifier fails the net-of-cost back-test (4 trades, mean net -0.62% per trade)"
+    },
+    "SPY": {
+      "buying": "allowed",
+      "candidate": {
+        "accuracy": 0.5435684647302904,
+        "backtest_mean_net": null,
+        "backtest_trades": 0,
+        "decision_threshold": 0.001244482584297657,
+        "entry_bar": 0.006,
+        "gate_path": "FAIL",
+        "majority_baseline": 0.5892116182572614,
+        "prediction_quantiles": {
+          "p50": 0.0012151357950642705,
+          "p75": 0.0013439562171697617,
+          "p90": 0.001380182453431189,
+          "p95": 0.001380182453431189,
+          "p99": 0.002062660828232759
+        },
+        "roc_auc": 0.4940247545881349,
+        "wf_folds": 4,
+        "wf_mean_auc": 0.5108577872113056,
+        "wf_positive_folds": 1
+      },
+      "checked_at": "2026-10-11T09:49:53+00:00",
+      "incumbent": {
+        "backtest": {
+          "mean_net": 0.0029498890710502245,
+          "passes": true,
+          "total_net": 0.07374722677625561,
+          "trades": 25,
+          "win_rate": 0.68
+        },
+        "entry_bar": 0.6,
+        "model_type": "Legacy Classifier",
+        "rows": 241,
+        "threshold": 0.55
+      },
+      "live_model": "Legacy Classifier (existing, unverified)",
+      "reason": "candidate rejected; existing Legacy Classifier is profitable on the holdout (25 trades, mean net +0.29% per trade) but may have trained on that data"
+    }
+  },
+  "updated_at": "2026-10-11T09:49:54+00:00"
+}
