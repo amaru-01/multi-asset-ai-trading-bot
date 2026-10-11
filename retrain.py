@@ -620,6 +620,8 @@ def decide_status(deployed: bool, metrics: dict, incumbent: dict | None) -> dict
     model_type = incumbent["model_type"]
     if backtest["trades"] and backtest["mean_net"] == backtest["mean_net"]:
         detail = f"{backtest['trades']} trades, mean net {backtest['mean_net']:+.2%} per trade"
+        if backtest["trades"] < MIN_BACKTEST_TRADES:
+            detail += f"; fewer than the {MIN_BACKTEST_TRADES} needed to trust it"
     else:
         detail = f"only {backtest['trades']} trades (too few to judge)"
     status["incumbent"] = {
@@ -644,7 +646,7 @@ def decide_status(deployed: bool, metrics: dict, incumbent: dict | None) -> dict
         live_model=f"{model_type} (existing)",
         buying="blocked" if BLOCK_BUYING_ON_FAILURE else "allowed",
         reason=(
-            f"no model passed: candidate rejected and existing {model_type} fails the "
+            f"no model passed: candidate rejected and existing {model_type} is not proven by the "
             f"net-of-cost back-test ({detail})"
         ),
     )
