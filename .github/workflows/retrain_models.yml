@@ -37,10 +37,9 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          # A non-zero exit here usually means some models failed the validation
-          # gate and were retained. Log it as a warning instead of failing the step.
-          python retrain.py || echo "::warning::retrain.py exited with code $? (check log: some models may have been retained)"
+        # retrain.py exits non-zero only for real errors (download, training, save,
+        # status file). A candidate rejected by the gates is not an error.
+        run: python retrain.py
 
       - name: Commit updated model files
         if: ${{ !cancelled() }}
@@ -48,6 +47,10 @@ jobs:
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           git add Model/xgb_trading_model.json Model/xgb_btc_model.json Model/xgb_eth_model.json
+          # Per-asset verdicts that run_execution.py reads before opening positions
+          if [ -f Model/model_status.json ]; then
+            git add Model/model_status.json
+          fi
           if git diff --cached --quiet; then
             echo "No model updates to commit."
           else

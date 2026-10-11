@@ -5,6 +5,7 @@ when the ALPACA_PAPER environment variable is explicitly set to "false".
 """
 
 import argparse
+import json
 import logging
 import math
 import os
@@ -257,6 +258,26 @@ def get_position_value(trading_client: TradingClient, symbol: str) -> float:
     )
 
 
+def buying_blocked(ticker: str) -> tuple[bool, str]:
+    """Check Model/model_status.json, written by retrain.py, for a buying block.
+
+    Fails open: a missing or unreadable file never stops trading, so behaviour is
+    unchanged until retrain.py has run and recorded a verdict for the asset.
+    """
+    path = MODEL_DIR / "model_status.json"
+    try:
+        status = json.loads(path.read_text(encoding="utf-8"))
+        entry = (status.get("assets") or {}).get(ticker) or {}
+    except FileNotFoundError:
+        return False, ""
+    except Exception:
+        logger.warning("Could not read model status file path=%s", path, exc_info=True)
+        return False, ""
+    if entry.get("buying") == "blocked":
+        return True, str(entry.get("reason", "blocked by model status"))
+    return False, ""
+
+
 def entry_margin_required(model, result: dict) -> float:
     """Prediction needed to open a new position (never below the model's own threshold)."""
     floor = (
@@ -400,6 +421,15 @@ def execute_asset(
             )
         else:
             logger.info("HOLD signal, nothing to clean up ticker=%s", asset["ticker"])
+        return
+
+    blocked, block_reason = buying_blocked(asset["ticker"])
+    if blocked:
+        logger.warning(
+            "Skipping buy: blocked by model status ticker=%s reason=%s",
+            asset["ticker"],
+            block_reason,
+        )
         return
 
     open_orders = get_open_orders(trading_client, alpaca_symbol)
