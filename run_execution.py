@@ -258,6 +258,15 @@ def get_position_value(trading_client: TradingClient, symbol: str) -> float:
     )
 
 
+def us_market_open(trading_client: TradingClient) -> bool:
+    """True when the US stock market is open. Fails open if the clock call errors."""
+    try:
+        return bool(trading_client.get_clock().is_open)
+    except Exception:
+        logger.exception("Could not read market clock; assuming open")
+        return True
+
+
 def buying_blocked(ticker: str) -> tuple[bool, str]:
     """Check Model/model_status.json, written by retrain.py, for a buying block.
 
@@ -429,6 +438,13 @@ def execute_asset(
             "Skipping buy: blocked by model status ticker=%s reason=%s",
             asset["ticker"],
             block_reason,
+        )
+        return
+
+    if asset["type"] != "crypto" and not us_market_open(trading_client):
+        logger.info(
+            "Skipping buy: US market is closed ticker=%s (no after-hours orders sized from stale prices)",
+            asset["ticker"],
         )
         return
 
