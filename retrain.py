@@ -81,6 +81,18 @@ ENFORCE_EVIDENCE_GATES = True
 # in Model/model_status.json and run_execution.py stops opening new positions in it.
 BLOCK_BUYING_ON_FAILURE = True
 STATUS_FILE_NAME = "model_status.json"
+# A blocked asset only reopens after this many consecutive weekly evidence passes.
+REQUIRED_PASS_STREAK = 2
+# Forward test: the live model is replayed on bars that arrived after tracking began
+# (after the model was last trained), so the result is genuinely out of sample. Once it
+# has this many trades it overrides the in-sample checks: a positive mean net return
+# allows buying, a non-positive one blocks it.
+MIN_FORWARD_TRADES = 10
+# Classifier challenger for assets whose live model is a legacy classifier. It is trained
+# and scored like the regressors, but only reported: set True only if models.py can save
+# an XGBClassifier in the format load_trading_model() reads.
+DEPLOY_CLASSIFIER_CHALLENGER = False
+CLASSIFIER_EXIT_BAR = 0.55  # mirrors LEGACY_CLASSIFIER_THRESHOLD
 
 
 def resolve_model_path(asset: dict) -> Path:
@@ -246,10 +258,27 @@ def simulate_strategy(
     }
 
 
+def _fit_classifier(train: pd.DataFrame, feature_columns: list[str]):
+    """Fit an XGBoost classifier for the 'return above the target threshold' label."""
+    from xgboost import XGBClassifier
+
+    return XGBClassifier(
+        n_estimators=200,
+        max_depth=3,
+        learning_rate=0.05,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        random_state=RANDOM_STATE,
+        eval_metric="logloss",
+        n_jobs=1,
+    ).fit(train[feature_columns], train["Target_Direction"].astype(int))
+
+
 def walk_forward_check(
     frame: pd.DataFrame,
     feature_columns: list[str],
     asset: dict,
+    classifier: bool = False,
 ) -> dict:
     """Train on an expanding window and score each later fold out of sample.
 
@@ -267,10 +296,16 @@ def walk_forward_check(
         labels = test["Target_Direction"].to_numpy(dtype="int8")
         if len(train) < MIN_FOLD_TRAIN_ROWS or len(np.unique(labels)) < 2:
             continue
-        model = XGBRegressorModel(
-            asset["symbol"], feature_columns=feature_columns
-        ).fit(train[feature_columns], train["Target_Return"])
-        predictions = np.asarray(model.predict_values(test[feature_columns]), dtype=float)
+        if classifier:
+            fitted = _fit_classifier(train, feature_columns)
+            predictions = fitted.predict_proba(test[feature_columns])[:, 1]
+        else:
+            model = XGBRegressorModel(
+                asset["symbol"], feature_columns=feature_columns
+            ).fit(train[feature_columns], train["Target_Return"])
+            predictions = np.asarray(
+                model.predict_values(test[feature_columns]), dtype=float
+            )
         fold_aucs.append(float(roc_auc_score(labels, predictions)))
 
     folds_used = len(fold_aucs)
@@ -508,25 +543,38 @@ def evaluate_incumbent(
     spy_close: pd.Series,
     holdout_index,
     cost: float,
+    since=None,
 ) -> dict:
-    """Score the model currently in Model/ with the live rule on the holdout dates.
+    """Score the model currently in Model/ with the live rule.
 
-    The incumbent may already have been trained on part of this window, so a good
-    result is an optimistic upper bound and is reported as "unverified".
+    Default: the holdout dates. The incumbent may already have been trained on part of
+    that window, so a good result is an optimistic upper bound ("unverified").
+
+    With `since` (a date), score only completed bars after that date instead. These
+    bars arrived after tracking began, so the result is a genuine forward test.
     """
+    forward = since is not None
     path = resolve_model_path(asset)
     if not path.is_file():
         return {"evaluated": False, "reason": "no model file"}
-    if holdout_index is None:
+    if holdout_index is None and not forward:
         return {"evaluated": False, "reason": "no holdout window"}
     try:
         model = load_trading_model(path, asset["symbol"], asset["feature_columns"])
         columns = list(model.feature_names or asset["feature_columns"])
         features = build_inference_features(history, columns, spy_close)
-        rows = features.loc[features.index.intersection(holdout_index)]
-        rows = rows.dropna(subset=columns + ["Close"])
-        if len(rows) < 60:
-            return {"evaluated": False, "reason": f"only {len(rows)} comparable rows"}
+        if forward:
+            today = pd.Timestamp(datetime.now(timezone.utc).date())
+            dates = pd.DatetimeIndex(features.index)
+            rows = features.loc[(dates > pd.Timestamp(since)) & (dates < today)]
+            rows = rows.dropna(subset=columns + ["Close"])
+            if len(rows) < 2:
+                return {"evaluated": False, "reason": "no new completed bars yet"}
+        else:
+            rows = features.loc[features.index.intersection(holdout_index)]
+            rows = rows.dropna(subset=columns + ["Close"])
+            if len(rows) < 60:
+                return {"evaluated": False, "reason": f"only {len(rows)} comparable rows"}
         inputs = rows[columns].astype(float)
 
         if hasattr(model, "predict_values"):
@@ -553,8 +601,9 @@ def evaluate_incumbent(
             cost,
         )
         logger.info(
-            "Incumbent back-test ticker=%s model=%s rows=%d threshold=%.4f "
+            "%s ticker=%s model=%s rows=%d threshold=%.4f "
             "entry_bar=%.4f trades=%d mean_net=%+.3f%% win_rate=%.2f passes=%s",
+            "Forward test" if forward else "Incumbent back-test",
             asset["ticker"],
             getattr(model, "model_type", "unknown"),
             len(rows),
@@ -578,8 +627,105 @@ def evaluate_incumbent(
         return {"evaluated": False, "reason": "evaluation error"}
 
 
-def decide_status(deployed: bool, metrics: dict, incumbent: dict | None) -> dict:
-    """Summarise which model is live for an asset and whether buying is allowed."""
+def evaluate_classifier_challenger(
+    asset: dict,
+    history: pd.DataFrame,
+    spy_close: pd.Series,
+) -> dict:
+    """Train a fresh XGBoost classifier and score it like the regressor candidates.
+
+    Assets whose live model is a legacy classifier were never validated by the regressor
+    candidate, so this gives an honest out-of-sample read on the classifier approach:
+    train on the early part of the history, score the purged holdout, back-test the live
+    classifier rule (enter at CLASSIFIER_ENTRY_MIN, exit below CLASSIFIER_EXIT_BAR) net of
+    costs, and run the same walk-forward check. Report-only unless
+    DEPLOY_CLASSIFIER_CHALLENGER is enabled.
+    """
+    try:
+        feature_columns = asset["feature_columns"]
+        frame = build_regression_training_frame(
+            history,
+            spy_close,
+            horizon_days=FORWARD_HORIZON_DAYS,
+            return_threshold=REGRESSION_RETURN_THRESHOLD,
+        )
+        frame = frame.dropna(
+            subset=feature_columns + ["Target_Return", "Target_Direction"]
+        )
+        if len(frame) < MIN_TRAINING_ROWS:
+            return {"evaluated": False, "reason": "not enough rows"}
+        split_at = int(len(frame) * (1 - TEST_FRACTION))
+        training_rows = frame.iloc[: max(0, split_at - FORWARD_HORIZON_DAYS)]
+        holdout_rows = frame.iloc[split_at:]
+        y_true = holdout_rows["Target_Direction"].to_numpy(dtype="int8")
+        if training_rows.empty or len(np.unique(y_true)) < 2:
+            return {"evaluated": False, "reason": "labels insufficient"}
+
+        model = _fit_classifier(training_rows, feature_columns)
+        probabilities = model.predict_proba(holdout_rows[feature_columns])[:, 1]
+        auc = float(roc_auc_score(y_true, probabilities))
+        cost = trading_cost(asset)
+        backtest = simulate_strategy(
+            holdout_rows["Close"].to_numpy(dtype=float),
+            probabilities,
+            CLASSIFIER_ENTRY_MIN,
+            CLASSIFIER_EXIT_BAR,
+            cost,
+        )
+        walk_forward = walk_forward_check(
+            frame, feature_columns, asset, classifier=True
+        )
+        passed = bool(
+            auc > MIN_OUT_OF_SAMPLE_ROC_AUC
+            and backtest["passes"]
+            and walk_forward["passes"]
+        )
+        logger.info(
+            "Classifier challenger ticker=%s holdout_auc=%.4f backtest_trades=%d "
+            "backtest_mean_net=%+.3f%% wf_positive=%d/%d wf_mean_auc=%.4f passed=%s "
+            "(report-only=%s)",
+            asset["ticker"],
+            auc,
+            backtest["trades"],
+            backtest["mean_net"] * 100,
+            walk_forward["positive_folds"],
+            walk_forward["folds_used"],
+            walk_forward["mean_auc"],
+            passed,
+            not DEPLOY_CLASSIFIER_CHALLENGER,
+        )
+        return {
+            "evaluated": True,
+            "roc_auc": auc,
+            "backtest_trades": backtest["trades"],
+            "backtest_mean_net": backtest["mean_net"],
+            "wf_positive_folds": walk_forward["positive_folds"],
+            "wf_folds": walk_forward["folds_used"],
+            "wf_mean_auc": walk_forward["mean_auc"],
+            "passed": passed,
+        }
+    except Exception:
+        logger.exception("Classifier challenger failed ticker=%s", asset["ticker"])
+        return {"evaluated": False, "reason": "error"}
+
+
+def decide_status(
+    deployed: bool,
+    metrics: dict,
+    incumbent: dict | None,
+    previous: dict | None = None,
+    forward: dict | None = None,
+    challenger: dict | None = None,
+    tracking_since: str | None = None,
+) -> dict:
+    """Summarise which model is live for an asset and whether buying is allowed.
+
+    Order of evidence: (1) a forward test with enough trades overrides everything;
+    otherwise (2) a candidate that passed, or a live model that passes the in-sample
+    back-test; (3) a previously blocked asset needs REQUIRED_PASS_STREAK consecutive
+    passes from (2) before buying reopens.
+    """
+    previous = previous or {}
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     candidate = {
         key: metrics.get(key)
@@ -598,58 +744,119 @@ def decide_status(deployed: bool, metrics: dict, incumbent: dict | None) -> dict
             "prediction_quantiles",
         )
     }
-    status = {"checked_at": now, "candidate": candidate}
+    status = {
+        "checked_at": now,
+        "candidate": candidate,
+        "tracking_since": tracking_since or now[:10],
+        "deployed_candidate": bool(deployed),
+    }
+    if challenger:
+        status["classifier_challenger"] = challenger
+    if forward and forward.get("evaluated"):
+        status["forward"] = {
+            "since": status["tracking_since"],
+            "rows": forward["rows"],
+            "trades": forward["backtest"]["trades"],
+            "mean_net": forward["backtest"]["mean_net"],
+            "win_rate": forward["backtest"]["win_rate"],
+        }
+
+    detail = ""
+    evidence_pass = False
+    fail_open = False
     if deployed:
         status.update(
             live_model="3-Day Regressor (retrained)",
             buying="allowed",
             reason="candidate passed the holdout, walk-forward and net-of-cost gates",
         )
-        return status
-
-    if incumbent is None or not incumbent.get("evaluated"):
+        evidence_pass = True
+    elif incumbent is None or not incumbent.get("evaluated"):
         why = (incumbent or {}).get("reason", "not evaluated")
+        fail_open = True
         status.update(
             live_model="existing model file (not scored)",
             buying="allowed",
             reason=f"candidate rejected; existing model could not be scored ({why})",
         )
-        return status
-
-    backtest = incumbent["backtest"]
-    model_type = incumbent["model_type"]
-    if backtest["trades"] and backtest["mean_net"] == backtest["mean_net"]:
-        detail = f"{backtest['trades']} trades, mean net {backtest['mean_net']:+.2%} per trade"
-        if backtest["trades"] < MIN_BACKTEST_TRADES:
-            detail += f"; fewer than the {MIN_BACKTEST_TRADES} needed to trust it"
     else:
-        detail = f"only {backtest['trades']} trades (too few to judge)"
-    status["incumbent"] = {
-        "model_type": model_type,
-        "threshold": incumbent["threshold"],
-        "entry_bar": incumbent["entry_bar"],
-        "rows": incumbent["rows"],
-        "backtest": backtest,
-    }
-    if backtest["passes"]:
+        backtest = incumbent["backtest"]
+        model_type = incumbent["model_type"]
+        if backtest["trades"] and backtest["mean_net"] == backtest["mean_net"]:
+            detail = (
+                f"{backtest['trades']} trades, mean net {backtest['mean_net']:+.2%} per trade"
+            )
+            if backtest["trades"] < MIN_BACKTEST_TRADES:
+                detail += f"; fewer than the {MIN_BACKTEST_TRADES} needed to trust it"
+        else:
+            detail = f"only {backtest['trades']} trades (too few to judge)"
+        status["incumbent"] = {
+            "model_type": model_type,
+            "threshold": incumbent["threshold"],
+            "entry_bar": incumbent["entry_bar"],
+            "rows": incumbent["rows"],
+            "backtest": backtest,
+        }
+        if backtest["passes"]:
+            status.update(
+                live_model=f"{model_type} (existing, unverified)",
+                buying="allowed",
+                reason=(
+                    f"candidate rejected; existing {model_type} is profitable on the holdout "
+                    f"({detail}) but may have trained on that data"
+                ),
+            )
+            # A model deployed last week was trained on this very window, so its
+            # in-sample pass proves nothing new.
+            evidence_pass = not previous.get("deployed_candidate", False)
+        else:
+            status.update(
+                live_model=f"{model_type} (existing)",
+                buying="blocked" if BLOCK_BUYING_ON_FAILURE else "allowed",
+                reason=(
+                    f"no model passed: candidate rejected and existing {model_type} is not "
+                    f"proven by the net-of-cost back-test ({detail})"
+                ),
+            )
+
+    # (1) Forward test with enough trades is real out-of-sample evidence.
+    fwd = status.get("forward")
+    forward_decided = False
+    if fwd and fwd["trades"] >= MIN_FORWARD_TRADES and fwd["mean_net"] == fwd["mean_net"]:
+        text = (
+            f"forward test since {fwd['since']}: {fwd['trades']} trades, "
+            f"mean net {fwd['mean_net']:+.2%} per trade"
+        )
+        forward_decided = True
+        if fwd["mean_net"] > 0:
+            status.update(buying="allowed", reason=f"{text} (out of sample, positive)")
+            evidence_pass = True
+        else:
+            status.update(
+                buying="blocked" if BLOCK_BUYING_ON_FAILURE else "allowed",
+                reason=f"{text} (out of sample, losing)",
+            )
+            evidence_pass = False
+
+    # (3) Streak rule for assets that were blocked before this run.
+    streak = int(previous.get("pass_streak", 0)) + 1 if evidence_pass else 0
+    status["pass_streak"] = streak
+    was_blocked = previous.get("buying") == "blocked"
+    if (
+        was_blocked
+        and status["buying"] == "allowed"
+        and not fail_open
+        and not forward_decided
+        and streak < REQUIRED_PASS_STREAK
+    ):
         status.update(
-            live_model=f"{model_type} (existing, unverified)",
-            buying="allowed",
+            buying="blocked",
             reason=(
-                f"candidate rejected; existing {model_type} is profitable on the holdout "
-                f"({detail}) but may have trained on that data"
+                f"pass streak {streak}/{REQUIRED_PASS_STREAK}; buying reopens after "
+                f"{REQUIRED_PASS_STREAK} consecutive weekly passes"
             ),
         )
-        return status
-
-    status.update(
-        live_model=f"{model_type} (existing)",
-        buying="blocked" if BLOCK_BUYING_ON_FAILURE else "allowed",
-        reason=(
-            f"no model passed: candidate rejected and existing {model_type} is not proven by the "
-            f"net-of-cost back-test ({detail})"
-        ),
-    )
+    status["evidence_pass"] = bool(evidence_pass)
     return status
 
 
@@ -666,6 +873,28 @@ def _json_safe(value):
     if isinstance(value, (float, np.floating)):
         return float(value) if np.isfinite(value) else None
     return value
+
+
+def read_previous_assets() -> dict:
+    """Last run's per-asset status (empty when the file is missing or unreadable)."""
+    try:
+        data = json.loads((MODEL_DIR / STATUS_FILE_NAME).read_text(encoding="utf-8"))
+        return data.get("assets", {}) or {}
+    except Exception:
+        return {}
+
+
+def tracking_start(previous: dict) -> str:
+    """Date from which forward results count: the last run, or today if there is none.
+
+    The live model was last saved before the previous run, so every completed bar after
+    that date is unseen by it.
+    """
+    for key in ("tracking_since", "checked_at"):
+        value = str(previous.get(key) or "")[:10]
+        if len(value) == 10:
+            return value
+    return datetime.now(timezone.utc).date().isoformat()
 
 
 def write_model_status(statuses: dict) -> bool:
@@ -700,7 +929,7 @@ def _send_retraining_report(
     """Send per-asset validation metrics, live-model status and buying state to Telegram."""
     latest_by_ticker = {result["ticker"]: result for result in results}
     table_lines = [
-        f"{'Ticker':<8} {'AUC':>5} {'WF':>4} {'Trd':>4} {'Net%':>6} {'Gate':<8} Buying"
+        f"{'Ticker':<7} {'AUC':>5} {'WF':>3} {'Trd':>3} {'Net%':>5} Buy"
     ]
     detail_lines = []
     for asset in ASSETS:
@@ -711,10 +940,10 @@ def _send_retraining_report(
         if status is None:
             buying = "--"
         else:
-            buying = "🔴 BLOCKED" if status["buying"] == "blocked" else "🟢 OK"
+            buying = "🔴" if status["buying"] == "blocked" else "🟢"
         if result is None or "error" in result:
             table_lines.append(
-                f"{label:<8} {'--':>5} {'--':>4} {'--':>4} {'--':>6} {'ERROR':<8} {buying}"
+                f"{label:<7} {'--':>5} {'--':>3} {'--':>3} {'--':>5} ERR"
             )
             continue
         net = result["backtest_mean_net"]
@@ -726,19 +955,37 @@ def _send_retraining_report(
         else:
             gate = "Fail"
         table_lines.append(
-            f"{label:<8} {result['roc_auc']:>5.3f} "
-            f"{result['wf_positive_folds']}/{result['wf_folds']:<2} "
-            f"{result['backtest_trades']:>4} {net_text:>6} {gate:<8} {buying}"
+            f"{label:<7} {result['roc_auc']:>5.3f} "
+            f"{result['wf_positive_folds']}/{result['wf_folds']:<1} "
+            f"{result['backtest_trades']:>3} {net_text:>5} {buying}"
         )
         if status is not None:
             marker = "updated" if ticker in updated_assets else "kept"
             detail_lines.append(
                 f"{label}: {escape(status['live_model'], quote=False)} ({marker}). "
-                f"{escape(status['reason'][:170], quote=False)}"
+                f"{escape(status['reason'][:600], quote=False)} [{gate}]"
             )
+            fwd = status.get("forward")
+            if fwd:
+                mean = fwd["mean_net"]
+                mean_text = f"{mean:+.2%}" if mean == mean else "n/a"
+                detail_lines.append(
+                    f"  Forward test since {fwd['since']}: {fwd['trades']} trades, "
+                    f"mean net {mean_text} (counts at {MIN_FORWARD_TRADES}+ trades)"
+                )
+            chal = status.get("classifier_challenger")
+            if chal and chal.get("evaluated"):
+                detail_lines.append(
+                    f"  Classifier challenger: AUC {chal['roc_auc']:.3f}, "
+                    f"WF {chal['wf_positive_folds']}/{chal['wf_folds']}, "
+                    f"{chal['backtest_trades']} trades, "
+                    f"{'passed' if chal['passed'] else 'did not pass'} (report-only)"
+                )
     message = (
         "<b>MODEL RETRAINING REPORT</b>\n"
-        "<pre>" + "\n".join(table_lines) + "</pre>"
+        "<pre>" + "\n".join(table_lines) + "</pre>\n"
+        "<i>WF = walk-forward folds with AUC&gt;0.5, Trd = back-test trades, "
+        "Net% = mean net per trade, 🟢 buying allowed / 🔴 blocked</i>"
     )
     if detail_lines:
         message += "\n" + "\n".join(detail_lines)
@@ -756,6 +1003,7 @@ def main() -> int:
     retained_assets: list[str] = []
     results: list[dict] = []
     statuses: dict = {}
+    previous_assets = read_previous_assets()
 
     histories = {}
     for asset in ASSETS:
@@ -780,10 +1028,29 @@ def main() -> int:
             if model is None:
                 retained_assets.append(ticker)
                 logger.warning("Model retained ticker=%s gate=%s", ticker, metrics["gate_path"])
+                previous = previous_assets.get(ticker, {})
+                since = tracking_start(previous)
+                cost = trading_cost(asset)
                 incumbent = evaluate_incumbent(
-                    asset, history, spy_close, holdout_index, trading_cost(asset)
+                    asset, history, spy_close, holdout_index, cost
                 )
-                statuses[ticker] = decide_status(False, metrics, incumbent)
+                forward = evaluate_incumbent(
+                    asset, history, spy_close, None, cost, since=since
+                )
+                challenger = None
+                if "classifier" in str(incumbent.get("model_type", "")).lower():
+                    challenger = evaluate_classifier_challenger(
+                        asset, history, spy_close
+                    )
+                statuses[ticker] = decide_status(
+                    False,
+                    metrics,
+                    incumbent,
+                    previous=previous,
+                    forward=forward,
+                    challenger=challenger,
+                    tracking_since=since,
+                )
                 logger.warning(
                     "Asset status ticker=%s buying=%s reason=%s",
                     ticker,
@@ -793,7 +1060,13 @@ def main() -> int:
                 continue
             model.save_artifact(asset["model_path"])
             updated_assets.append(ticker)
-            statuses[ticker] = decide_status(True, metrics, None)
+            statuses[ticker] = decide_status(
+                True,
+                metrics,
+                None,
+                previous=previous_assets.get(ticker, {}),
+                tracking_since=datetime.now(timezone.utc).date().isoformat(),
+            )
             logger.info(
                 "Model updated ticker=%s path=%s gate=Path %s threshold=%.6f",
                 ticker,
