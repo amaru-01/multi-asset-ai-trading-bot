@@ -3,26 +3,26 @@
     "BTC-USD": {
       "buying": "blocked",
       "candidate": {
-        "accuracy": 0.5380281690140845,
-        "backtest_mean_net": -0.0035799806426029617,
-        "backtest_trades": 10,
-        "decision_threshold": 0.0017867905553430319,
+        "accuracy": 0.5971830985915493,
+        "backtest_mean_net": -0.010671915293572403,
+        "backtest_trades": 14,
+        "decision_threshold": 0.002969377441331744,
         "entry_bar": 0.006,
-        "gate_path": "FAIL",
+        "gate_path": "FAIL-EVIDENCE",
         "majority_baseline": 0.5802816901408451,
         "prediction_quantiles": {
-          "p50": 0.001942199538461864,
-          "p75": 0.004096904071047902,
-          "p90": 0.01023102831095457,
-          "p95": 0.01389492601156235,
-          "p99": 0.02063903842121361
+          "p50": 0.0015342655824497342,
+          "p75": 0.004130670567974448,
+          "p90": 0.009789712540805342,
+          "p95": 0.013763629086315633,
+          "p99": 0.020958970636129372
         },
-        "roc_auc": 0.5549781716296345,
+        "roc_auc": 0.5708933342021242,
         "wf_folds": 4,
-        "wf_mean_auc": 0.5209596508266937,
+        "wf_mean_auc": 0.5128967074644506,
         "wf_positive_folds": 3
       },
-      "checked_at": "2026-10-18T04:19:08+00:00",
+      "checked_at": "2026-10-25T04:29:22+00:00",
       "incumbent": {
         "backtest": {
           "mean_net": 0.07043933948067937,
@@ -42,33 +42,33 @@
     "ETH-USD": {
       "buying": "blocked",
       "candidate": {
-        "accuracy": 0.4591549295774648,
-        "backtest_mean_net": -0.037997286806672304,
-        "backtest_trades": 12,
-        "decision_threshold": -0.0019624419510364532,
+        "accuracy": 0.447887323943662,
+        "backtest_mean_net": -0.025125644629109458,
+        "backtest_trades": 15,
+        "decision_threshold": -0.0020969905890524387,
         "entry_bar": 0.006,
         "gate_path": "FAIL",
         "majority_baseline": 0.5830985915492958,
         "prediction_quantiles": {
-          "p50": 0.0018963107140734792,
-          "p75": 0.0067953860852867365,
-          "p90": 0.010500294715166097,
-          "p95": 0.0128257866948843,
-          "p99": 0.01948535777628417
+          "p50": 0.0022712410427629948,
+          "p75": 0.006013919599354267,
+          "p90": 0.009939253330230715,
+          "p95": 0.012130771204829216,
+          "p99": 0.01600633222609757
         },
-        "roc_auc": 0.4876289332811072,
+        "roc_auc": 0.4923619271445358,
         "wf_folds": 4,
-        "wf_mean_auc": 0.49598760825619187,
-        "wf_positive_folds": 2
+        "wf_mean_auc": 0.48323660667512214,
+        "wf_positive_folds": 1
       },
-      "checked_at": "2026-10-18T04:19:08+00:00",
+      "checked_at": "2026-10-25T04:29:23+00:00",
       "incumbent": {
         "backtest": {
-          "mean_net": 0.00015793332616987222,
+          "mean_net": 0.0033415270694506826,
           "passes": false,
-          "total_net": 0.0006317333046794889,
-          "trades": 4,
-          "win_rate": 0.75
+          "total_net": 0.016707635347253412,
+          "trades": 5,
+          "win_rate": 0.8
         },
         "entry_bar": 0.6,
         "model_type": "Legacy Classifier",
@@ -76,36 +76,36 @@
         "threshold": 0.55
       },
       "live_model": "Legacy Classifier (existing)",
-      "reason": "no model passed: candidate rejected and existing Legacy Classifier is not proven by the net-of-cost back-test (4 trades, mean net +0.02% per trade; fewer than the 10 needed to trust it)"
+      "reason": "no model passed: candidate rejected and existing Legacy Classifier is not proven by the net-of-cost back-test (5 trades, mean net +0.33% per trade; fewer than the 10 needed to trust it)"
     },
     "SPY": {
       "buying": "allowed",
       "candidate": {
-        "accuracy": 0.4315352697095436,
+        "accuracy": 0.45228215767634855,
         "backtest_mean_net": null,
         "backtest_trades": 0,
-        "decision_threshold": 0.0009523811168037355,
+        "decision_threshold": 0.001214251504279673,
         "entry_bar": 0.006,
         "gate_path": "FAIL",
-        "majority_baseline": 0.6016597510373445,
+        "majority_baseline": 0.5975103734439834,
         "prediction_quantiles": {
-          "p50": 0.0011891340836882591,
-          "p75": 0.0012596903834491968,
-          "p90": 0.001289697247557342,
-          "p95": 0.0012941433815285563,
-          "p99": 0.002203858783468596
+          "p50": 0.001198368496261537,
+          "p75": 0.0013093121815472841,
+          "p90": 0.001359186484478414,
+          "p95": 0.0014361568028107285,
+          "p99": 0.0019119138363748744
         },
-        "roc_auc": 0.4443247126436782,
+        "roc_auc": 0.4265821878579611,
         "wf_folds": 4,
-        "wf_mean_auc": 0.5318304306180704,
-        "wf_positive_folds": 3
+        "wf_mean_auc": 0.5266097157579445,
+        "wf_positive_folds": 2
       },
-      "checked_at": "2026-10-18T04:19:08+00:00",
+      "checked_at": "2026-10-25T04:29:22+00:00",
       "incumbent": {
         "backtest": {
-          "mean_net": 0.002477981194527523,
+          "mean_net": 0.0021581893327156164,
           "passes": true,
-          "total_net": 0.06194952986318808,
+          "total_net": 0.05395473331789041,
           "trades": 25,
           "win_rate": 0.64
         },
@@ -115,8 +115,8 @@
         "threshold": 0.55
       },
       "live_model": "Legacy Classifier (existing, unverified)",
-      "reason": "candidate rejected; existing Legacy Classifier is profitable on the holdout (25 trades, mean net +0.25% per trade) but may have trained on that data"
+      "reason": "candidate rejected; existing Legacy Classifier is profitable on the holdout (25 trades, mean net +0.22% per trade) but may have trained on that data"
     }
   },
-  "updated_at": "2026-10-18T04:19:08+00:00"
+  "updated_at": "2026-10-25T04:29:23+00:00"
 }
