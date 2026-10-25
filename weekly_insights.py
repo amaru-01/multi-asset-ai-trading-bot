@@ -212,6 +212,8 @@ def get_model_summary() -> list:
                 "trades": candidate.get("backtest_trades"),
                 "net": candidate.get("backtest_mean_net"),
                 "checked_at": str(entry.get("checked_at", ""))[:10],
+                "forward": entry.get("forward"),
+                "streak": entry.get("pass_streak", 0),
             }
         )
     return summaries
@@ -269,6 +271,14 @@ def format_weekly_insights(
         lines.append(
             f"• {escape(summary['ticker'])}: {icon} | candidate AUC {auc} | WF {wf} | {net}"
         )
+        fwd = summary.get("forward")
+        if fwd:
+            mean = fwd.get("mean_net")
+            mean_text = f"{mean:+.2%}" if mean is not None and mean == mean else "n/a"
+            lines.append(
+                f"   ↳ forward test since {fwd.get('since')}: {fwd.get('trades', 0)} trades, "
+                f"mean net {mean_text}"
+            )
 
     lines.append("")
     lines.append("<b>📈 Key Takeaways</b>")
