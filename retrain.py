@@ -117,6 +117,12 @@ def download_history(ticker: str) -> pd.DataFrame:
     if response is None or response.empty:
         raise ValueError(f"yfinance returned no history for {ticker}")
     history = normalize_market_columns(response)
+    # Today's daily bar is still forming (crypto trades 24/7), so its close keeps moving
+    # during the day. Using it would make targets, back-tests and marked-to-market open
+    # trades change from run to run. Keep completed bars only.
+    today = pd.Timestamp(datetime.now(timezone.utc).date())
+    if len(history) and pd.DatetimeIndex(history.index)[-1] >= today:
+        history = history[pd.DatetimeIndex(history.index) < today]
     if len(history) < MIN_TRAINING_ROWS:
         raise ValueError(
             f"Insufficient valid history for {ticker}: {len(history)} rows; "
