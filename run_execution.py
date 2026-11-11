@@ -128,10 +128,17 @@ def live_capital_cap() -> float | None:
     return cap
 
 
-def kill_switch_active() -> bool:
+def kill_switch_source() -> str | None:
+    """Name what triggered the kill switch, or None if it is off."""
     if os.getenv(HALT_ENV, "").strip().lower() in {"1", "true", "yes", "on"}:
-        return True
-    return HALT_FILE.exists()
+        return f"{HALT_ENV} environment variable"
+    if HALT_FILE.exists():
+        return f"{HALT_FILE.name} file"
+    return None
+
+
+def kill_switch_active() -> bool:
+    return kill_switch_source() is not None
 
 
 def max_daily_loss_pct() -> float:
@@ -148,8 +155,9 @@ def max_daily_loss_pct() -> float:
 
 def entries_halt_reason(equity: float, last_equity: float | None) -> str | None:
     """Why new positions must not be opened right now, or None if trading may proceed."""
-    if kill_switch_active():
-        return f"kill switch active ({HALT_ENV} or {HALT_FILE.name})"
+    source = kill_switch_source()
+    if source:
+        return f"kill switch active ({source})"
     if last_equity and last_equity > 0 and math.isfinite(equity):
         change = equity / last_equity - 1.0
         limit = max_daily_loss_pct()
@@ -421,6 +429,85 @@ def stop_loss_triggered(
     return current_price <= stop_price, entry_price, current_price, stop_price
 
 
+def close_if_stop_hit(
+    asset: dict,
+    trading_client: TradingClient,
+    reference_price: float,
+    current_atr: float,
+    held=None,
+) -> bool:
+    """Close a held crypto position if it fell through its ATR stop. True if it did.
+
+    Pass `held` when the caller already looked the position up, to save an API call.
+    """
+    alpaca_symbol = asset["alpaca_symbol"]
+    if held is None:
+        held = get_open_position(trading_client, alpaca_symbol)
+    if held is None:
+        return False
+    hit, entry_price, current_price, stop_price = stop_loss_triggered(
+        held, reference_price, current_atr
+    )
+    if not hit:
+        return False
+    cancel_open_orders(trading_client, alpaca_symbol)
+    close_position_if_open(trading_client, alpaca_symbol)
+    logger.warning(
+        "Stop-loss triggered ticker=%s entry=%.2f price=%.2f stop=%.2f",
+        asset["ticker"],
+        entry_price,
+        current_price,
+        stop_price,
+    )
+    send_telegram_message(
+        f"<b>STOP-LOSS TRIGGERED</b> [{mode_label()}]\n"
+        f"<b>Symbol:</b> {escape(asset['ticker'])}\n"
+        f"<b>Entry price:</b> ${entry_price:,.2f}\n"
+        f"<b>Current price:</b> ${current_price:,.2f}\n"
+        f"<b>Stop level:</b> ${stop_price:,.2f} "
+        f"({STOP_LOSS_ATR_MULTIPLE} ATR below entry)\n"
+        "<b>Position:</b> Close submitted"
+    )
+    return True
+
+
+def run_risk_only(assets: list[dict], trading_client: TradingClient) -> int:
+    """Check crypto stop-losses only: no model, no signals, never opens a position.
+
+    Meant to run often (every 10-15 minutes). Assets with no open position are skipped
+    without fetching any market data, so most runs are cheap. SPY is skipped because its
+    stop is an exchange-side bracket order. Returns 1 if any stop check failed.
+    """
+    failed = False
+    for asset in assets:
+        if asset["type"] != "crypto":
+            continue
+        try:
+            held = get_open_position(trading_client, asset["alpaca_symbol"])
+            if held is None:
+                logger.info("Risk check: no open position ticker=%s", asset["ticker"])
+                continue
+            _, reference_price, current_atr = get_latest_features(
+                asset["ticker"], asset["feature_columns"]
+            )
+            stopped = close_if_stop_hit(
+                asset, trading_client, reference_price, current_atr, held
+            )
+            logger.info(
+                "Risk check ticker=%s result=%s",
+                asset["ticker"],
+                "stop-loss closed position" if stopped else "within stop",
+            )
+        except Exception:
+            failed = True
+            logger.exception("Risk check failed ticker=%s", asset["ticker"])
+    if failed:
+        logger.error("One or more risk checks failed")
+        return 1
+    logger.info("%s risk check completed", mode_label())
+    return 0
+
+
 def _signal_details(model, signal: dict) -> tuple[str, str]:
     """Return display model type and predicted value/cutoff text."""
     if isinstance(model, XGBRegressorModel):
@@ -468,32 +555,10 @@ def execute_asset(
     )
 
     # Bot-side stop-loss for crypto (SPY already has an exchange-side bracket stop).
-    if asset["type"] == "crypto":
-        held = get_open_position(trading_client, alpaca_symbol)
-        if held is not None:
-            hit, entry_price, current_price, stop_price = stop_loss_triggered(
-                held, reference_price, current_atr
-            )
-            if hit:
-                cancel_open_orders(trading_client, alpaca_symbol)
-                close_position_if_open(trading_client, alpaca_symbol)
-                logger.warning(
-                    "Stop-loss triggered ticker=%s entry=%.2f price=%.2f stop=%.2f",
-                    asset["ticker"],
-                    entry_price,
-                    current_price,
-                    stop_price,
-                )
-                send_telegram_message(
-                    f"<b>STOP-LOSS TRIGGERED</b> [{mode_label()}]\n"
-                    f"<b>Symbol:</b> {escape(asset['ticker'])}\n"
-                    f"<b>Entry price:</b> ${entry_price:,.2f}\n"
-                    f"<b>Current price:</b> ${current_price:,.2f}\n"
-                    f"<b>Stop level:</b> ${stop_price:,.2f} "
-                    f"({STOP_LOSS_ATR_MULTIPLE} ATR below entry)\n"
-                    "<b>Position:</b> Close submitted"
-                )
-                return
+    if asset["type"] == "crypto" and close_if_stop_hit(
+        asset, trading_client, reference_price, current_atr
+    ):
+        return
 
     if result["signal"] != "BUY":
         # Don't let a marginal signal flip close a position that was only just
@@ -692,6 +757,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--symbol",
         help="Optional ticker to process (e.g. BTC-USD, SPY, or ETH-USD)",
     )
+    parser.add_argument(
+        "--risk-only",
+        action="store_true",
+        help="Only check crypto stop-losses (no signals, never opens positions)",
+    )
     arguments = parser.parse_args(argv)
     if arguments.symbol:
         matches = [
@@ -715,6 +785,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     """Execute requested assets serially using the configured Alpaca account."""
     arguments = _parse_args(argv)
+    if arguments.risk_only:
+        # Closing positions is always allowed, so the live-mode confirmation and capital
+        # cap are deliberately not required here: a misconfigured live setup must never
+        # leave an open position without its stop-loss check.
+        try:
+            return run_risk_only(arguments.assets, create_trading_client())
+        except Exception:
+            logger.exception("Risk-only run could not start (%s)", mode_label())
+            return 1
     try:
         capital_cap = live_capital_cap()
     except ValueError as exc:
