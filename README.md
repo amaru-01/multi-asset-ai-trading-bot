@@ -152,6 +152,17 @@ All workflows support manual triggering via `workflow_dispatch` and require the 
 - `TELEGRAM_INSIGHTS_BOT_TOKEN` (for digest and insights)
 - `TELEGRAM_INSIGHTS_CHAT_ID` (for digest and insights)
 
+## Walk-Forward Backtest
+
+`python backtest.py` compares the live entry/exit rule against buy-and-hold over the same window. Models are retrained on an expanding window and only predict later bars, the decision threshold is calibrated on training data, signals fill at the next bar's open, and every position change pays fees plus slippage. Output goes to `backtest_results/` (git-ignored): `summary.csv` and one equity curve per asset.
+
+```powershell
+python backtest.py
+python backtest.py --start 2020-01-01 --slippage-bps 10 --assets BTC-USD ETH-USD
+```
+
+It also reports a buy-and-hold scaled to the strategy's time in the market, which is the fairer comparison when the strategy is often in cash. The backtest is fully invested when long and does not simulate ATR sizing, the stop-loss, cooldown or minimum-hold rules, so live results will differ. Results are historical and not a prediction.
+
 ## Live-Trading Safeguards
 
 The bot trades on paper by default. Going live is deliberately hard: `run_execution.py` refuses to start unless **all three** are set.
