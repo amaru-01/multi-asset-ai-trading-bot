@@ -29,9 +29,34 @@ LEGACY_NAMES = [
 ]
 
 
+# Every public name retrain.py exposed before it was split into the training package
+# (plus the private helpers older code and tests reached for).
+LEGACY_RETRAIN_NAMES = [
+    # constants
+    "THRESHOLD_PERCENTILES", "MIN_THRESHOLD_PRECISION", "MIN_THRESHOLD_RECALL",
+    "ROUND_TRIP_COST", "REGRESSOR_ENTRY_MIN", "CLASSIFIER_ENTRY_MIN", "MIN_BACKTEST_TRADES",
+    "WALK_FORWARD_FOLDS", "WALK_FORWARD_MIN_POSITIVE_FOLDS", "WALK_FORWARD_MIN_MEAN_AUC",
+    "MIN_FOLD_TRAIN_ROWS", "ENFORCE_EVIDENCE_GATES", "BLOCK_BUYING_ON_FAILURE",
+    "STATUS_FILE_NAME", "REQUIRED_PASS_STREAK", "MIN_FORWARD_TRADES",
+    "DEPLOY_CLASSIFIER_CHALLENGER", "CLASSIFIER_EXIT_BAR",
+    # functions
+    "resolve_model_path", "trading_cost", "download_history", "select_prediction_threshold",
+    "quality_gate", "simulate_strategy", "_fit_classifier", "walk_forward_check",
+    "log_prediction_calibration", "train_and_validate", "evaluate_incumbent",
+    "evaluate_classifier_challenger", "decide_status", "_json_safe", "read_previous_assets",
+    "tracking_start", "write_model_status", "_send_retraining_report", "main",
+]
+
+
 class PublicNameTests(unittest.TestCase):
     def test_legacy_names_still_importable(self):
         missing = [name for name in LEGACY_NAMES if not hasattr(run_execution, name)]
+        self.assertEqual(missing, [])
+
+    def test_retrain_legacy_names_still_importable(self):
+        import retrain
+
+        missing = [name for name in LEGACY_RETRAIN_NAMES if not hasattr(retrain, name)]
         self.assertEqual(missing, [])
 
     def test_script_entry_point_is_unchanged(self):

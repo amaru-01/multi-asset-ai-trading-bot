@@ -53,7 +53,8 @@ These figures are transcribed from the supplied output image. In that run, the s
 | `models/base_model.py` | Common fit, signal, and artifact interface. |
 | `models/regressor.py` | Three-day return regressor and persisted per-model decision threshold. |
 | `models/classifier.py` | Compatibility wrapper for legacy classifier artifacts. |
-| `retrain.py` | Per-asset training, holdout gates, percentile cutoff selection, and Telegram report. |
+| `retrain.py` | Command-line entry point for retraining: runs every asset through the gates and records the buy/block status. |
+| `training/` | The retraining logic, one module per job: `settings` (thresholds and switches), `data`, `gates` (quality gate, strategy simulation, walk-forward check), `threshold`, `candidate` (train and validate a new model), `incumbent` (score the live model and the classifier challenger), `status` (the buy/block decision and `model_status.json`) and `report` (Telegram). |
 | `run_execution.py` | Command-line entry point for Alpaca execution: argument parsing and the per-asset loop. |
 | `execution/` | The execution logic, one module per job: `mode`, `broker`, `market_data`, `safeguards`, `risk` (stop-loss and `--risk-only`), `gates` (entry checks), `sizing`, `orders` and `trading` (the per-asset flow). |
 | `notifications/telegram.py` | Best-effort Telegram Bot API helper using `urllib`. Supports dual-bot routing with explicit token parameters. |
