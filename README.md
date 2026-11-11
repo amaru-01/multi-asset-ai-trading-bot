@@ -1,7 +1,7 @@
 # Multi-Asset AI Trading Bot
 
 <p align="center">
-	<img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+">
+	<img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white" alt="Python 3.11+">
 	<img src="https://img.shields.io/badge/Model-XGBoost-EC6B23" alt="XGBoost model">
 	<img src="https://img.shields.io/badge/Broker-Alpaca%20Paper-5CB85C" alt="Alpaca paper trading">
 	<img src="https://img.shields.io/badge/Data-Yahoo%20Finance-6001D2" alt="Yahoo Finance data">
@@ -65,6 +65,7 @@ These figures are transcribed from the supplied output image. In that run, the s
 | `Model/*.json` | Native XGBoost model artifacts, updated per asset when its gate passes. |
 | `Output_model/` | Archived Kaggle charts and evaluation outputs. |
 | `.github/workflows/retrain_models.yml` | Automated weekly model retraining on Sundays with graceful failure handling. |
+| `.github/workflows/watchdog.yml` | Hourly check that the trading workflow is still succeeding; alerts on Telegram if not. |
 | `.github/workflows/daily_digest.yml` | Scheduled daily digest Monday-Saturday at 08:00 UTC. |
 | `.github/workflows/weekly_insights.yml` | Scheduled weekly insights newsletter on Sundays at 18:00 UTC. |
 
@@ -90,7 +91,7 @@ Legacy classifier artifacts remain loadable with their historical feature contra
 
 ## Setup
 
-Use Python 3.10 or newer. From the project folder, create and activate a virtual environment, then install the packages listed in `requirements.txt`:
+Use Python 3.11 or newer (pandas, NumPy, SciPy and scikit-learn require it; the workflows and tests run on 3.11). From the project folder, create and activate a virtual environment, then install the packages listed in `requirements.txt`. Every dependency is pinned to the exact version the tests run against, so a new upstream release cannot silently change model results; to upgrade one, change its version, run the tests, and retrain before merging:
 
 ```powershell
 python -m venv venv
@@ -207,6 +208,20 @@ The flag never stops the bot from managing a position it already holds: stop-los
 Alpaca has no bracket orders for crypto, so the crypto stop-loss is enforced by the bot, and the full trading run only happens every couple of hours. `python run_execution.py --risk-only` is a lightweight mode for running much more often: it only checks open crypto positions against their ATR stop and closes any that fell through it. It loads no model, creates no signals and never opens a position. With no open position it fetches no market data. It does not need the live-mode confirmation, so a misconfigured setup can never leave a position unchecked.
 
 The `risk_check.yml` workflow runs it. It has no schedule of its own: point a second cron-job.org job at its `workflow_dispatch` every 10-15 minutes, the same way as the trading workflow. It shares the trading workflow's concurrency lock so the two never place orders at once, and it sends a Telegram alert if the check itself fails. Each run installs dependencies, so on a private repository check your monthly Actions minutes before choosing a very short interval.
+
+## Watchdog for Stalled Runs
+
+If cron-job.org stops calling GitHub, or every run starts failing, the bot silently stops managing positions. The `watchdog.yml` workflow runs hourly, looks at the trading workflow's history through the GitHub API, and sends a Telegram alert when there has been no **successful** run for too long. It needs no dependencies and no broker keys, and it fails loudly if the alert itself cannot be delivered.
+
+The first alert comes within an hour of crossing the limit and then repeats every 6 hours while the problem lasts. Settings are optional repository variables (*Settings > Secrets and variables > Actions > Variables*):
+
+| Variable | Meaning | Default |
+| --- | --- | --- |
+| `STALE_TRADING_HOURS` | Hours without a successful trading run before alerting | `6` |
+| `WATCH_RISK_CHECK` | Set to `true` to also watch the 15-minute risk check | off |
+| `STALE_RISK_MINUTES` | Minutes without a successful risk check before alerting | `60` |
+
+Limits: the watchdog runs on GitHub's own scheduler, so it cannot report a GitHub-wide outage, and GitHub pauses scheduled workflows in a repository with no activity for 60 days. Run it locally with `python -m monitoring.stale_runs` (set `GITHUB_TOKEN` and `GITHUB_REPOSITORY`).
 
 ## Limitations
 
