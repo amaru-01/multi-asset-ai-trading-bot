@@ -61,10 +61,12 @@ These figures are transcribed from the supplied output image. In that run, the s
 | `reporting/daily_digest.py` | Generates Monday-Saturday market snapshots with 24h crypto stats, portfolio status, and model signals. |
 | `reporting/weekly_insights.py` | Generates Sunday newsletter with 7-day performance analysis, trading metrics, and model summaries. |
 | `research/backtest.py`, `research/robustness.py` | Walk-forward backtest versus buy-and-hold, and the robustness and random-timing checks. |
+| `monitoring/stale_runs.py` | Watchdog that alerts on Telegram when the scheduled trading runs stop succeeding. |
 | `scripts/fetch_data.py`, `scripts/prepare_dataset.py` | Legacy SPY one-day CSV preparation through the shared feature pipeline. |
 | `Model/*.json` | Native XGBoost model artifacts, updated per asset when its gate passes. |
 | `Output_model/` | Archived Kaggle charts and evaluation outputs. |
 | `.github/workflows/retrain_models.yml` | Automated weekly model retraining on Sundays with graceful failure handling. |
+| `.github/workflows/watchdog.yml` | Hourly check that the trading workflow is still succeeding; alerts on Telegram if not. |
 | `.github/workflows/daily_digest.yml` | Scheduled daily digest Monday-Saturday at 08:00 UTC. |
 | `.github/workflows/weekly_insights.yml` | Scheduled weekly insights newsletter on Sundays at 18:00 UTC. |
 
@@ -205,6 +207,20 @@ The flag never stops the bot from managing a position it already holds: stop-los
 Alpaca has no bracket orders for crypto, so the crypto stop-loss is enforced by the bot, and the full trading run only happens every couple of hours. `python run_execution.py --risk-only` is a lightweight mode for running much more often: it only checks open crypto positions against their ATR stop and closes any that fell through it. It loads no model, creates no signals and never opens a position. With no open position it fetches no market data. It does not need the live-mode confirmation, so a misconfigured setup can never leave a position unchecked.
 
 The `risk_check.yml` workflow runs it. It has no schedule of its own: point a second cron-job.org job at its `workflow_dispatch` every 10-15 minutes, the same way as the trading workflow. It shares the trading workflow's concurrency lock so the two never place orders at once, and it sends a Telegram alert if the check itself fails. Each run installs dependencies, so on a private repository check your monthly Actions minutes before choosing a very short interval.
+
+## Watchdog for Stalled Runs
+
+If cron-job.org stops calling GitHub, or every run starts failing, the bot silently stops managing positions. The `watchdog.yml` workflow runs hourly, looks at the trading workflow's history through the GitHub API, and sends a Telegram alert when there has been no **successful** run for too long. It needs no dependencies and no broker keys, and it fails loudly if the alert itself cannot be delivered.
+
+The first alert comes within an hour of crossing the limit and then repeats every 6 hours while the problem lasts. Settings are optional repository variables (*Settings > Secrets and variables > Actions > Variables*):
+
+| Variable | Meaning | Default |
+| --- | --- | --- |
+| `STALE_TRADING_HOURS` | Hours without a successful trading run before alerting | `6` |
+| `WATCH_RISK_CHECK` | Set to `true` to also watch the 15-minute risk check | off |
+| `STALE_RISK_MINUTES` | Minutes without a successful risk check before alerting | `60` |
+
+Limits: the watchdog runs on GitHub's own scheduler, so it cannot report a GitHub-wide outage, and GitHub pauses scheduled workflows in a repository with no activity for 60 days. Run it locally with `python -m monitoring.stale_runs` (set `GITHUB_TOKEN` and `GITHUB_REPOSITORY`).
 
 ## Limitations
 
