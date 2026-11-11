@@ -8,8 +8,11 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import run_execution as rx  # noqa: E402
+from execution import safeguards  # noqa: E402
+from helpers import patch_name  # noqa: E402
 
 BTC = {
     "ticker": "BTC-USD", "symbol": "BTC", "type": "crypto",
@@ -28,16 +31,13 @@ def position(entry, current):
 
 class RiskOnlyTests(unittest.TestCase):
     def setUp(self):
-        patches = {
-            "get_open_position": mock.patch.object(rx, "get_open_position"),
-            "get_latest_features": mock.patch.object(rx, "get_latest_features"),
-            "cancel": mock.patch.object(rx, "cancel_open_orders"),
-            "close": mock.patch.object(rx, "close_position_if_open"),
-            "telegram": mock.patch.object(rx, "send_telegram_message"),
+        self.m = {
+            "get_open_position": patch_name(self, "get_open_position"),
+            "get_latest_features": patch_name(self, "get_latest_features"),
+            "cancel": patch_name(self, "cancel_open_orders"),
+            "close": patch_name(self, "close_position_if_open"),
+            "telegram": patch_name(self, "send_telegram_message"),
         }
-        self.m = {name: p.start() for name, p in patches.items()}
-        for p in patches.values():
-            self.addCleanup(p.stop)
 
     def test_no_position_skips_market_data(self):
         self.m["get_open_position"].return_value = None
@@ -104,7 +104,7 @@ class KillSwitchSourceTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        patcher = mock.patch.object(rx, "HALT_FILE", Path(tmp.name) / "HALT_TRADING")
+        patcher = mock.patch.object(safeguards, "HALT_FILE", Path(tmp.name) / "HALT_TRADING")
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -124,7 +124,7 @@ class KillSwitchSourceTests(unittest.TestCase):
             self.assertIn("TRADING_HALTED environment variable", rx.entries_halt_reason(1.0, 1.0))
 
     def test_file_is_named(self):
-        rx.HALT_FILE.write_text("x", encoding="utf-8")
+        safeguards.HALT_FILE.write_text("x", encoding="utf-8")
         with self.clean_env():
             self.assertEqual(rx.kill_switch_source(), "HALT_TRADING file")
             self.assertIn("HALT_TRADING file", rx.entries_halt_reason(1.0, 1.0))

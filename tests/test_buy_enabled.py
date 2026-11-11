@@ -7,9 +7,11 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import config  # noqa: E402
 import run_execution as rx  # noqa: E402
+from helpers import patch_name  # noqa: E402
 
 
 def asset(ticker):
@@ -95,11 +97,10 @@ class ExecuteAssetTests(unittest.TestCase):
             "recent": ("get_recent_filled_order", None),
             "telegram": ("send_telegram_message", None),
         }
-        self.m = {}
-        for key, (attr, value) in names.items():
-            patcher = mock.patch.object(rx, attr, return_value=value)
-            self.m[key] = patcher.start()
-            self.addCleanup(patcher.stop)
+        self.m = {
+            key: patch_name(self, attr, return_value=value)
+            for key, (attr, value) in names.items()
+        }
         self.client = mock.Mock()
 
     def model(self, signal):
