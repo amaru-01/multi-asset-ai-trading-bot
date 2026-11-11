@@ -180,6 +180,12 @@ Two controls stop **new entries** while still allowing exits, stop-losses and HO
 
 A halt is also sent to Telegram. Run the tests with `python -m unittest discover -s tests -v`.
 
+## Frequent Stop-Loss Check
+
+Alpaca has no bracket orders for crypto, so the crypto stop-loss is enforced by the bot, and the full trading run only happens every couple of hours. `python run_execution.py --risk-only` is a lightweight mode for running much more often: it only checks open crypto positions against their ATR stop and closes any that fell through it. It loads no model, creates no signals and never opens a position. With no open position it fetches no market data. It does not need the live-mode confirmation, so a misconfigured setup can never leave a position unchecked.
+
+The `risk_check.yml` workflow runs it. It has no schedule of its own: point a second cron-job.org job at its `workflow_dispatch` every 10-15 minutes, the same way as the trading workflow. It shares the trading workflow's concurrency lock so the two never place orders at once, and it sends a Telegram alert if the check itself fails. Each run installs dependencies, so on a private repository check your monthly Actions minutes before choosing a very short interval.
+
 ## Limitations
 
 - Historical Kaggle training notebooks and charts are archival; current models are trained by `retrain.py`.
