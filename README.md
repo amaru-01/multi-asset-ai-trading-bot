@@ -54,7 +54,8 @@ These figures are transcribed from the supplied output image. In that run, the s
 | `models/regressor.py` | Three-day return regressor and persisted per-model decision threshold. |
 | `models/classifier.py` | Compatibility wrapper for legacy classifier artifacts. |
 | `retrain.py` | Per-asset training, holdout gates, percentile cutoff selection, and Telegram report. |
-| `run_execution.py` | Symbol-scoped Alpaca paper execution and Telegram trade/cleanup reports. |
+| `run_execution.py` | Command-line entry point for Alpaca execution: argument parsing and the per-asset loop. |
+| `execution/` | The execution logic, one module per job: `mode`, `broker`, `market_data`, `safeguards`, `risk` (stop-loss and `--risk-only`), `gates` (entry checks), `sizing`, `orders` and `trading` (the per-asset flow). |
 | `telegram_notifier.py` | Best-effort Telegram Bot API helper using `urllib`. Supports dual-bot routing with explicit token parameters. |
 | `daily_digest.py` | Generates Monday-Saturday market snapshots with 24h crypto stats, portfolio status, and model signals. |
 | `weekly_insights.py` | Generates Sunday newsletter with 7-day performance analysis, trading metrics, and model summaries. |

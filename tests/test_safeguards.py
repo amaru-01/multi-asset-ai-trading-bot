@@ -13,6 +13,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import run_execution as rx  # noqa: E402
+from execution import safeguards  # noqa: E402
 
 
 def env(**values):
@@ -77,7 +78,7 @@ class HaltTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
-        patcher = mock.patch.object(rx, "HALT_FILE", Path(self._tmp.name) / "HALT_TRADING")
+        patcher = mock.patch.object(safeguards, "HALT_FILE", Path(self._tmp.name) / "HALT_TRADING")
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -90,7 +91,7 @@ class HaltTests(unittest.TestCase):
             self.assertIn("kill switch", rx.entries_halt_reason(1000.0, 1000.0))
 
     def test_file_kill_switch(self):
-        rx.HALT_FILE.write_text("stop", encoding="utf-8")
+        safeguards.HALT_FILE.write_text("stop", encoding="utf-8")
         with env():
             self.assertIn("kill switch", rx.entries_halt_reason(1000.0, 1000.0))
 
@@ -123,20 +124,20 @@ class ApplyCapitalCapTests(unittest.TestCase):
         )
 
     def test_live_cap_limits_equity_and_buying_power(self):
-        with mock.patch.object(rx, "get_position_value", return_value=0.0):
+        with mock.patch.object(safeguards, "get_position_value", return_value=0.0):
             self.assertEqual(
                 rx.apply_capital_cap(mock.Mock(), 100.0, 5000.0, 5000.0), (100.0, 100.0)
             )
 
     def test_live_cap_subtracts_existing_positions(self):
-        with mock.patch.object(rx, "get_position_value", return_value=30.0):
+        with mock.patch.object(safeguards, "get_position_value", return_value=30.0):
             equity, buying_power = rx.apply_capital_cap(mock.Mock(), 100.0, 5000.0, 5000.0)
         # 3 assets x $30 invested = $90 of the $100 cap used
         self.assertEqual(equity, 100.0)
         self.assertAlmostEqual(buying_power, 10.0)
 
     def test_overinvested_never_negative(self):
-        with mock.patch.object(rx, "get_position_value", return_value=500.0):
+        with mock.patch.object(safeguards, "get_position_value", return_value=500.0):
             _, buying_power = rx.apply_capital_cap(mock.Mock(), 100.0, 5000.0, 5000.0)
         self.assertEqual(buying_power, 0.0)
 
