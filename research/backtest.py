@@ -14,8 +14,8 @@ Simplifications (all documented in the printed notes): the strategy is fully inv
 when long, with no ATR position sizing, stop-loss, cooldown or minimum-hold rule.
 
 Usage:
-    python backtest.py
-    python backtest.py --start 2020-01-01 --slippage-bps 10 --assets BTC-USD ETH-USD
+    python -m research.backtest
+    python -m research.backtest --start 2020-01-01 --slippage-bps 10 --assets BTC-USD ETH-USD
 """
 
 import argparse

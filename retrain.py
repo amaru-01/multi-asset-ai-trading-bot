@@ -43,7 +43,7 @@ from features.pipeline import (
     normalize_market_columns,
 )
 from models import XGBRegressorModel, load_trading_model
-from telegram_notifier import send_telegram_message
+from notifications.telegram import send_telegram_message
 
 
 logger = logging.getLogger("multi_asset_trading_bot")

@@ -13,7 +13,7 @@ from alpaca.trading.requests import (
     TakeProfitRequest,
 )
 
-from telegram_notifier import send_telegram_message
+from notifications.telegram import send_telegram_message
 
 from .mode import mode_label
 

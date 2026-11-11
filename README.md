@@ -40,8 +40,8 @@ These figures are transcribed from the supplied output image. In that run, the s
 2. **Retrain:** `python retrain.py` downloads SPY, BTC-USD, and ETH-USD, selects a prediction cutoff using a training-only chronological validation slice, evaluates untouched holdouts, and exports each asset immediately when it passes Path A or Path B.
 3. **Execute:** `python run_execution.py` evaluates all configured assets in Alpaca paper mode. Use `python run_execution.py --symbol BTC-USD` to run only one asset.
 4. **Notify:** Telegram BUY, cleanup, and retraining reports are sent when `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are configured. Notification failures do not interrupt trading or retraining.
-5. **Daily Digest:** `python daily_digest.py` generates a Monday-Saturday market snapshot with 24h crypto stats, portfolio status, and current model signals. Requires `TELEGRAM_INSIGHTS_BOT_TOKEN` and `TELEGRAM_INSIGHTS_CHAT_ID`.
-6. **Weekly Insights:** `python weekly_insights.py` generates a Sunday newsletter with 7-day performance analysis, trading metrics, and model summaries. Requires `TELEGRAM_INSIGHTS_BOT_TOKEN` and `TELEGRAM_INSIGHTS_CHAT_ID`.
+5. **Daily Digest:** `python -m reporting.daily_digest` generates a Monday-Saturday market snapshot with 24h crypto stats, portfolio status, and current model signals. Requires `TELEGRAM_INSIGHTS_BOT_TOKEN` and `TELEGRAM_INSIGHTS_CHAT_ID`.
+6. **Weekly Insights:** `python -m reporting.weekly_insights` generates a Sunday newsletter with 7-day performance analysis, trading metrics, and model summaries. Requires `TELEGRAM_INSIGHTS_BOT_TOKEN` and `TELEGRAM_INSIGHTS_CHAT_ID`.
 
 ## Project Files
 
@@ -56,15 +56,18 @@ These figures are transcribed from the supplied output image. In that run, the s
 | `retrain.py` | Per-asset training, holdout gates, percentile cutoff selection, and Telegram report. |
 | `run_execution.py` | Command-line entry point for Alpaca execution: argument parsing and the per-asset loop. |
 | `execution/` | The execution logic, one module per job: `mode`, `broker`, `market_data`, `safeguards`, `risk` (stop-loss and `--risk-only`), `gates` (entry checks), `sizing`, `orders` and `trading` (the per-asset flow). |
-| `telegram_notifier.py` | Best-effort Telegram Bot API helper using `urllib`. Supports dual-bot routing with explicit token parameters. |
-| `daily_digest.py` | Generates Monday-Saturday market snapshots with 24h crypto stats, portfolio status, and model signals. |
-| `weekly_insights.py` | Generates Sunday newsletter with 7-day performance analysis, trading metrics, and model summaries. |
-| `fetch_data.py`, `prepare_dataset.py` | Legacy SPY one-day CSV preparation through the shared feature pipeline. |
+| `notifications/telegram.py` | Best-effort Telegram Bot API helper using `urllib`. Supports dual-bot routing with explicit token parameters. |
+| `reporting/daily_digest.py` | Generates Monday-Saturday market snapshots with 24h crypto stats, portfolio status, and model signals. |
+| `reporting/weekly_insights.py` | Generates Sunday newsletter with 7-day performance analysis, trading metrics, and model summaries. |
+| `research/backtest.py`, `research/robustness.py` | Walk-forward backtest versus buy-and-hold, and the robustness and random-timing checks. |
+| `scripts/fetch_data.py`, `scripts/prepare_dataset.py` | Legacy SPY one-day CSV preparation through the shared feature pipeline. |
 | `Model/*.json` | Native XGBoost model artifacts, updated per asset when its gate passes. |
 | `Output_model/` | Archived Kaggle charts and evaluation outputs. |
 | `.github/workflows/retrain_models.yml` | Automated weekly model retraining on Sundays with graceful failure handling. |
 | `.github/workflows/daily_digest.yml` | Scheduled daily digest Monday-Saturday at 08:00 UTC. |
 | `.github/workflows/weekly_insights.yml` | Scheduled weekly insights newsletter on Sundays at 18:00 UTC. |
+
+> **Running the moved scripts:** modules inside a folder are run as modules from the project root, for example `python -m reporting.daily_digest`, `python -m research.backtest` or `python -m scripts.fetch_data`. Running `python reporting/daily_digest.py` directly will not find the project's other modules.
 
 ## Features and Target
 
@@ -131,7 +134,7 @@ On a HOLD signal, execution cancels pending symbol orders and closes any open po
 Generate daily market digest (Monday-Saturday):
 
 ```powershell
-python daily_digest.py
+python -m reporting.daily_digest
 ```
 
 This script fetches 24h stats for BTC-USD and ETH-USD, queries Alpaca for portfolio status, and reports current model signals to the insights bot.
@@ -139,7 +142,7 @@ This script fetches 24h stats for BTC-USD and ETH-USD, queries Alpaca for portfo
 Generate weekly insights newsletter (Sunday):
 
 ```powershell
-python weekly_insights.py
+python -m reporting.weekly_insights
 ```
 
 This script calculates 7-day performance metrics, analyzes trading history, and summarizes model performance in a detailed newsletter.
@@ -164,11 +167,11 @@ All workflows support manual triggering via `workflow_dispatch` and require the 
 
 ## Walk-Forward Backtest
 
-`python backtest.py` compares the live entry/exit rule against buy-and-hold over the same window. Models are retrained on an expanding window and only predict later bars, the decision threshold is calibrated on training data, signals fill at the next bar's open, and every position change pays fees plus slippage. Output goes to `backtest_results/` (git-ignored): `summary.csv` and one equity curve per asset.
+`python -m research.backtest` compares the live entry/exit rule against buy-and-hold over the same window. Models are retrained on an expanding window and only predict later bars, the decision threshold is calibrated on training data, signals fill at the next bar's open, and every position change pays fees plus slippage. Output goes to `backtest_results/` (git-ignored): `summary.csv` and one equity curve per asset.
 
 ```powershell
-python backtest.py
-python backtest.py --start 2020-01-01 --slippage-bps 10 --assets BTC-USD ETH-USD
+python -m research.backtest
+python -m research.backtest --start 2020-01-01 --slippage-bps 10 --assets BTC-USD ETH-USD
 ```
 
 It also reports a buy-and-hold scaled to the strategy's time in the market, which is the fairer comparison when the strategy is often in cash. The backtest is fully invested when long and does not simulate ATR sizing, the stop-loss, cooldown or minimum-hold rules, so live results will differ. Results are historical and not a prediction.

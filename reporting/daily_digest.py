@@ -21,7 +21,7 @@ from config import (
     TELEGRAM_INSIGHTS_BOT_TOKEN_ENV,
     TELEGRAM_INSIGHTS_CHAT_ID_ENV,
 )
-from telegram_notifier import send_telegram_message
+from notifications.telegram import send_telegram_message
 
 logger = logging.getLogger("multi_asset_trading_bot.daily_digest")
 logging.basicConfig(
