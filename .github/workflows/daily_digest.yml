@@ -66,4 +66,4 @@ jobs:
           TELEGRAM_INSIGHTS_CHAT_ID: ${{ secrets.TELEGRAM_INSIGHTS_CHAT_ID }}
           ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
           ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
-        run: python daily_digest.py
+        run: python -m reporting.daily_digest

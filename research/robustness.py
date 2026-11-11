@@ -14,9 +14,9 @@ market, because a strategy that is only invested 30% of the time should be judge
 against 30% of the market, not 100%.
 
 Usage:
-    python robustness.py                    # BTC-USD and ETH-USD (SPY barely trades)
-    python robustness.py --assets SPY
-    python robustness.py --random-trials 5000
+    python -m research.robustness                    # BTC-USD and ETH-USD (SPY barely trades)
+    python -m research.robustness --assets SPY
+    python -m research.robustness --random-trials 5000
 """
 
 import argparse
@@ -27,7 +27,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from backtest import (
+from research.backtest import (
     ANNUALIZATION,
     ROUND_TRIP_FEE,
     download,

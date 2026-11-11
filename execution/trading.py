@@ -7,7 +7,7 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderSide
 
 from models import XGBRegressorModel
-from telegram_notifier import send_telegram_message
+from notifications.telegram import send_telegram_message
 
 from .broker import (
     cancel_open_orders,

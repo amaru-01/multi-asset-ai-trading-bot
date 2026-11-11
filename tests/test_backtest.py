@@ -8,7 +8,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import backtest as bt  # noqa: E402
+from research import backtest as bt  # noqa: E402
 
 
 def run(opens, preds, thresholds, first=0, cost=0.0, final_close=None, entry_min=0.0):

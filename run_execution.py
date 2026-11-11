@@ -73,7 +73,7 @@ from execution.orders import round_price  # noqa: F401  (re-exported)
 from execution.sizing import MAX_POSITION_EQUITY_FRACTION, RISK_FACTOR  # noqa: F401
 from execution.trading import MIN_HOLD_HOURS, execute_asset  # noqa: F401
 from models import load_trading_model
-from telegram_notifier import send_telegram_message
+from notifications.telegram import send_telegram_message
 
 logger = logging.getLogger("multi_asset_trading_bot")
 logging.basicConfig(

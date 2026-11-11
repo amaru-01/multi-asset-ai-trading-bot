@@ -5,7 +5,7 @@ from html import escape
 
 from alpaca.trading.client import TradingClient
 
-from telegram_notifier import send_telegram_message
+from notifications.telegram import send_telegram_message
 
 from .broker import cancel_open_orders, close_position_if_open, get_open_position
 from .market_data import get_latest_features
