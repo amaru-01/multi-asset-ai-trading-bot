@@ -29,3 +29,6 @@ Thumbs.db
 
 # Kill switch file (create it to halt new entries)
 HALT_TRADING
+
+# Backtest output (regenerate with: python backtest.py)
+backtest_results/
