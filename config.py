@@ -35,11 +35,17 @@ TEST_FRACTION = 0.2
 MIN_TRAINING_ROWS = 250
 RANDOM_STATE = 42
 
+# "buying_enabled" decides whether the bot may OPEN new positions in an asset. It never
+# stops the bot from managing a position it already holds (stop-loss, HOLD cleanup,
+# bracket exits). Based on the walk-forward backtest and robustness check, only BTC-USD
+# showed any timing edge: SPY almost never trades, and ETH-USD lost to exposure-matched
+# buy-and-hold in 8 of 9 settings. Override at run time with the BUY_ASSETS variable.
 ASSETS = [
     {
         "ticker": "SPY",
         "symbol": "SPY",
         "type": "stock",
+        "buying_enabled": False,
         "alpaca_symbol": "SPY",
         "model_path": MODEL_DIR / "xgb_trading_model.json",
         "feature_columns": list(STOCK_FEATURE_COLUMNS),
@@ -55,6 +61,7 @@ ASSETS = [
         "ticker": "BTC-USD",
         "symbol": "BTC",
         "type": "crypto",
+        "buying_enabled": True,
         "alpaca_symbol": "BTC/USD",
         "model_path": MODEL_DIR / "xgb_btc_model.json",
         "feature_columns": list(CRYPTO_FEATURE_COLUMNS),
@@ -70,6 +77,7 @@ ASSETS = [
         "ticker": "ETH-USD",
         "symbol": "ETH",
         "type": "crypto",
+        "buying_enabled": False,
         "alpaca_symbol": "ETH/USD",
         "model_path": MODEL_DIR / "xgb_eth_model.json",
         "feature_columns": list(ETH_FEATURE_COLUMNS),
