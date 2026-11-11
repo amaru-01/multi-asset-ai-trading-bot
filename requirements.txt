@@ -1,7 +1,15 @@
-pandas
-yfinance
-ta
-python-dotenv
-alpaca-py
-xgboost
-scikit-learn
+# Pinned to the versions the test suite runs against (Python 3.11, same as the workflows).
+# Unpinned installs let a new release change model results or break the bot overnight.
+#
+# To upgrade a package: change its version here, run
+#     python -m unittest discover -s tests
+# and, for pandas / numpy / scikit-learn / xgboost, retrain and compare before merging.
+pandas==3.0.6
+numpy==2.4.6
+scipy==1.17.1
+scikit-learn==1.9.1
+xgboost==3.2.0
+yfinance==1.7.0
+ta==0.11.0
+alpaca-py==0.44.0
+python-dotenv==1.2.4

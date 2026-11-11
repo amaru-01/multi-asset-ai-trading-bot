@@ -1,7 +1,7 @@
 # Multi-Asset AI Trading Bot
 
 <p align="center">
-	<img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+">
+	<img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white" alt="Python 3.11+">
 	<img src="https://img.shields.io/badge/Model-XGBoost-EC6B23" alt="XGBoost model">
 	<img src="https://img.shields.io/badge/Broker-Alpaca%20Paper-5CB85C" alt="Alpaca paper trading">
 	<img src="https://img.shields.io/badge/Data-Yahoo%20Finance-6001D2" alt="Yahoo Finance data">
@@ -90,7 +90,7 @@ Legacy classifier artifacts remain loadable with their historical feature contra
 
 ## Setup
 
-Use Python 3.10 or newer. From the project folder, create and activate a virtual environment, then install the packages listed in `requirements.txt`:
+Use Python 3.11 or newer (pandas, NumPy, SciPy and scikit-learn require it; the workflows and tests run on 3.11). From the project folder, create and activate a virtual environment, then install the packages listed in `requirements.txt`. Every dependency is pinned to the exact version the tests run against, so a new upstream release cannot silently change model results; to upgrade one, change its version, run the tests, and retrain before merging:
 
 ```powershell
 python -m venv venv
