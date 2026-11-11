@@ -60,8 +60,7 @@ These figures are transcribed from the supplied output image. In that run, the s
 | `notifications/telegram.py` | Best-effort Telegram Bot API helper using `urllib`. Supports dual-bot routing with explicit token parameters. |
 | `reporting/daily_digest.py` | Generates Monday-Saturday market snapshots with 24h crypto stats, portfolio status, and model signals. |
 | `reporting/weekly_insights.py` | Generates Sunday newsletter with 7-day performance analysis, trading metrics, and model summaries. |
-| `research/backtest.py`, `research/robustness.py` | Walk-forward backtest versus buy-and-hold, and the robustness and random-timing checks. |
-| `monitoring/stale_runs.py` | Watchdog that alerts on Telegram when the scheduled trading runs stop succeeding. |
+| `research/backtest.py`, `research/robustness.py`, `research/yearly.py` | Walk-forward backtest versus buy-and-hold, the robustness and random-timing checks, and the year-by-year breakdown. |
 | `scripts/fetch_data.py`, `scripts/prepare_dataset.py` | Legacy SPY one-day CSV preparation through the shared feature pipeline. |
 | `Model/*.json` | Native XGBoost model artifacts, updated per asset when its gate passes. |
 | `Output_model/` | Archived Kaggle charts and evaluation outputs. |
@@ -178,6 +177,8 @@ python -m research.backtest --start 2020-01-01 --slippage-bps 10 --assets BTC-US
 ```
 
 It also reports a buy-and-hold scaled to the strategy's time in the market, which is the fairer comparison when the strategy is often in cash. The backtest is fully invested when long and does not simulate ATR sizing, the stop-loss, cooldown or minimum-hold rules, so live results will differ. Results are historical and not a prediction.
+
+To see whether the result held in every year or came from a few special periods, run `python -m research.yearly`. It splits the same walk-forward result by calendar year (and into before / after a split year, default 2023) and compares each period with a buy-and-hold scaled to the strategy's time in the market and with random placement of the same trades. One year is a small sample, so read the pattern across years, not any single row.
 
 ## Live-Trading Safeguards
 
