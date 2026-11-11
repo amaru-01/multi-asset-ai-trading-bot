@@ -67,6 +67,13 @@ jobs:
           ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # Kill switch and circuit breaker. Set these as repository *variables*
+          # (Settings > Secrets and variables > Actions > Variables); no code change
+          # or commit is needed to halt new entries. An unset variable is an empty
+          # string, which run_execution.py treats as "not halted" / "use the default".
+          # A HALT_TRADING file cannot work here: every run starts from a fresh checkout.
+          TRADING_HALTED: ${{ vars.TRADING_HALTED }}
+          MAX_DAILY_LOSS_PCT: ${{ vars.MAX_DAILY_LOSS_PCT }}
         run: python run_execution.py
 
       - name: Send Email Notification
