@@ -20,9 +20,61 @@ A Python research and paper-trading system for SPY, Bitcoin, and Ethereum. It en
 - **You are responsible for your own decisions.** Follow the laws, tax rules and broker terms that apply to you. Nothing here is investment, legal or tax advice.
 - **No affiliation.** This project is independent and is not affiliated with or endorsed by Alpaca, Yahoo, Telegram or any other service it connects to.
 
-## Backtest Snapshot
+## Where the Project Stands
 
-The chart below is the Kaggle backtest output included with the project.
+**In one sentence:** the engineering is finished and tested, but the backtests do not show a dependable edge, so the bot stays on paper trading while it collects real evidence.
+
+### What has been built
+
+| Area | State |
+| --- | --- |
+| Model and retraining | Per-asset XGBoost three-day return models for SPY, BTC-USD and ETH-USD, promoted only when they pass accuracy, walk-forward, net-of-cost and forward-test gates. |
+| Execution | Alpaca paper trading with ATR position sizing, a 25% position cap, cooldowns and a software stop-loss for crypto. |
+| Safety | Live trading needs three deliberate settings; kill switch (`TRADING_HALTED` or `HALT_TRADING`); 3% daily-loss circuit breaker; per-asset buying switch (only BTC-USD may buy); halts block new entries only and never block exits. |
+| Monitoring | A 15-minute stop-loss check (`--risk-only`) and an hourly watchdog that sends a Telegram alert if scheduled runs stop. |
+| Research | Walk-forward backtest with fees and slippage, robustness grid, random-timing test, and a year-by-year breakdown (below). |
+| Code health | Large scripts split into `execution/` and `training/` packages, related tools grouped into folders, 212 tests, and every dependency pinned to a tested version. |
+
+### What the research found
+
+All figures come from one walk-forward run (models retrained on an expanding window, next-bar-open fills, a 0.5% round-trip fee on crypto plus 5 bps slippage per side) from 2019 to November 2026. The run is fully invested when long and ignores sizing, the stop-loss and cooldowns, so live results will differ.
+
+![Equity curves: strategy against buy-and-hold for SPY, BTC-USD and ETH-USD](docs/img/equity_curves.png)
+
+| Asset | Strategy return | Buy-and-hold | Time in market | Sharpe (strategy / hold) | Worst drawdown (strategy / hold) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| SPY | -11% | +202% | 1% (3 trades) | -0.22 / 0.86 | -22% / -32% |
+| BTC-USD | +585% | +1,814% | 29% (156 trades) | 0.85 / 0.93 | -56% / -77% |
+| ETH-USD | +63% | +997% | 34% (130 trades) | 0.37 / 0.80 | -61% / -79% |
+
+![Total return, Sharpe ratio and worst drawdown by asset](docs/img/risk_summary.png)
+
+Beating buy-and-hold is not the right test for a strategy that sits in cash most of the time. A fairer test compares it with a buy-and-hold that is invested for the same share of days, and then asks whether the same trades placed at random times would have done as well.
+
+![Robustness grid: edge over matched buy-and-hold in nine settings per asset](docs/img/robustness.png)
+
+![Year-by-year edge over matched buy-and-hold for BTC-USD and ETH-USD](docs/img/yearly_excess.png)
+
+**What this means**
+
+- **SPY:** the model almost never trades (three trades, 1% of the time in the market), so there is nothing to evaluate. It stays disabled for buying.
+- **ETH-USD:** no edge. It trailed the matched benchmark in 6 of 8 years and in 8 of 9 robustness settings, and the single setting that beat random timing does not hold up in the others. It stays disabled for buying.
+- **BTC-USD:** mixed, and weaker than a first look suggests. The strategy had less risk than holding (a smaller drawdown), but it beat the matched benchmark in only 4 of 8 years. One year, 2019 (+89 points), carries most of the headline edge and is the only year that beats random timing. From 2023 onward the edge is small (+18 points, p = 0.09) and the last two years are slightly negative. BTC is the only asset allowed to buy, and only on paper.
+- **Costs matter:** doubling slippage from 5 to 10 bps cuts the BTC result from +585% to +486%, and 20 bps cuts it to +328%.
+
+**Decision:** keep BTC on paper for two to three months. That live record, not the backtest, is the evidence that decides whether real money is ever worth considering.
+
+To regenerate the charts after rerunning the research scripts, install matplotlib (`pip install matplotlib`, used only for charts) and run `python -m research.charts`.
+
+### What comes next
+
+1. Let the paper trial run and compare live fills, stop-outs and returns with the backtest.
+2. Review the results after two to four weeks, then monthly.
+3. Only if the paper results hold up, decide whether to add an exchange-side resting stop (Alpaca supports stop-limit orders for crypto, with gap and cancel-ordering risks) before any small live test.
+
+## Original Kaggle Backtest
+
+The chart below is the Kaggle backtest output the project started from. It predates the walk-forward research above, which supersedes it.
 
 ![Kaggle out-of-sample equity curve comparing the XGBoost strategy with SPY buy-and-hold](Output_model/Equirt_curve_output.png)
 
@@ -61,6 +113,7 @@ These figures are transcribed from the supplied output image. In that run, the s
 | `reporting/daily_digest.py` | Generates Monday-Saturday market snapshots with 24h crypto stats, portfolio status, and model signals. |
 | `reporting/weekly_insights.py` | Generates Sunday newsletter with 7-day performance analysis, trading metrics, and model summaries. |
 | `research/backtest.py`, `research/robustness.py`, `research/yearly.py` | Walk-forward backtest versus buy-and-hold, the robustness and random-timing checks, and the year-by-year breakdown. |
+| `research/charts.py` | Draws the charts in this README from the research CSVs into `docs/img/` (needs matplotlib). |
 | `scripts/fetch_data.py`, `scripts/prepare_dataset.py` | Legacy SPY one-day CSV preparation through the shared feature pipeline. |
 | `Model/*.json` | Native XGBoost model artifacts, updated per asset when its gate passes. |
 | `Output_model/` | Archived Kaggle charts and evaluation outputs. |
@@ -199,7 +252,7 @@ A halt is also sent to Telegram. Run the tests with `python -m unittest discover
 
 ## Which Assets May Buy
 
-Each asset in `config.py` has a `buying_enabled` flag that decides whether the bot may **open new positions** in it. Only **BTC-USD** is enabled by default, because the walk-forward backtest and robustness check showed a timing edge only for Bitcoin: SPY almost never triggers an entry, and ETH-USD lost to a time-in-market-matched buy-and-hold in 8 of 9 settings. The model for every asset is still retrained and reported.
+Each asset in `config.py` has a `buying_enabled` flag that decides whether the bot may **open new positions** in it. Only **BTC-USD** is enabled by default, because the walk-forward backtest and robustness check showed a possible timing edge only for Bitcoin (and a weak, unproven one, see [Where the Project Stands](#where-the-project-stands)): SPY almost never triggers an entry, and ETH-USD lost to a time-in-market-matched buy-and-hold in 8 of 9 settings. The model for every asset is still retrained and reported.
 
 The flag never stops the bot from managing a position it already holds: stop-losses, HOLD-signal cleanups and SPY bracket exits all still work for disabled assets. To change the set without editing code, set the `BUY_ASSETS` variable (locally, or as a repository variable on GitHub Actions) to a comma-separated list such as `BTC-USD,ETH-USD`. A non-empty `BUY_ASSETS` replaces the config flags; leave it unset to use them. Unknown names are logged as warnings. To stop buying everything, use `TRADING_HALTED` instead.
 
@@ -227,7 +280,7 @@ Limits: the watchdog runs on GitHub's own scheduler, so it cannot report a GitHu
 
 - Historical Kaggle training notebooks and charts are archival; current models are trained by `retrain.py`.
 - Model quality gates can fail because market returns are noisy. In that case the previous model remains active for that asset.
-- Reported backtest performance is limited to the supplied screenshot; fees, slippage, and other risk statistics are not documented in the repository.
+- Backtests are simulations: they are fully invested when long and ignore position sizing, the stop-loss and cooldowns, and one strong year (2019) drives most of the BTC result. Live paper results will differ.
 - Regression outputs and percentile cutoffs are not guarantees of future returns.
 
 ## License and Security
