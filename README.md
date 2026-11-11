@@ -175,7 +175,7 @@ The bot trades on paper by default. Going live is deliberately hard: `run_execut
 
 Two controls stop **new entries** while still allowing exits, stop-losses and HOLD cleanups:
 
-- **Kill switch:** set `TRADING_HALTED=true`, or create an empty file named `HALT_TRADING` in the project root.
+- **Kill switch:** set `TRADING_HALTED=true`, or create an empty file named `HALT_TRADING` in the project root. On GitHub Actions only the variable works (each run starts from a fresh checkout): add a repository variable named `TRADING_HALTED` with value `true` under *Settings > Secrets and variables > Actions > Variables*, and delete it or set it to `false` to resume.
 - **Daily-loss circuit breaker:** entries stop when equity is down 3% or more versus the previous close. Override with `MAX_DAILY_LOSS_PCT` (for example `0.02`).
 
 A halt is also sent to Telegram. Run the tests with `python -m unittest discover -s tests -v`.
