@@ -1,0 +1,45 @@
+name: Bot Watchdog
+
+# Sends a Telegram alert when the scheduled trading runs stop succeeding (for example
+# cron-job.org stops calling GitHub, or every run starts failing). It looks at the
+# workflow history only, so it needs no dependencies and no broker keys.
+#
+# Settings (repository variables, all optional):
+#   STALE_TRADING_HOURS   hours without a successful trading run before alerting (default 6)
+#   WATCH_RISK_CHECK      set to "true" to also watch the 15-minute risk check
+#   STALE_RISK_MINUTES    minutes without a successful risk check before alerting (default 60)
+#
+# Limits: this runs on GitHub's own scheduler, so it cannot report a GitHub-wide outage,
+# and GitHub pauses scheduled workflows in a repository with no activity for 60 days.
+on:
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Check for stalled runs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          STALE_TRADING_HOURS: ${{ vars.STALE_TRADING_HOURS }}
+          WATCH_RISK_CHECK: ${{ vars.WATCH_RISK_CHECK }}
+          STALE_RISK_MINUTES: ${{ vars.STALE_RISK_MINUTES }}
+        run: python -m monitoring.stale_runs
