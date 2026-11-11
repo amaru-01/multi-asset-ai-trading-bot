@@ -9,7 +9,16 @@
 
 A Python research and paper-trading system for SPY, Bitcoin, and Ethereum. It engineers shared market features, trains per-asset XGBoost regressors to estimate three-day forward returns, validates candidates on chronological holdouts, and connects eligible signals to an Alpaca **paper-trading** account.
 
-> This is an educational prototype, not investment advice. Backtest results are historical and do not predict future performance. The execution script is configured for Alpaca paper trading, not live trading.
+## ⚠️ Disclaimer: please read before using
+
+**This project is a learning and research prototype. It is not a finished trading product, it is not proven to make money, and it is not financial advice.**
+
+- **It has not demonstrated a reliable edge.** In this repository's own backtests the strategy trailed buy-and-hold on SPY and ETH, and its Bitcoin results were mixed and weaker in recent years. Past or simulated performance does not predict future results.
+- **It runs on paper trading by default.** A live-trading mode exists only behind deliberate safeguards (see [Live-Trading Safeguards](#live-trading-safeguards)) so the code can be tested. It is not a recommendation to trade real money with this bot.
+- **You can lose money, including all of it.** Markets, and crypto in particular, are volatile. Fees, slippage, bugs, bad or delayed data (this project relies on Yahoo Finance via `yfinance`), broker or network outages and scheduler delays on GitHub Actions can all cause losses that a backtest does not show. Only ever risk money you can afford to lose.
+- **No warranty and no liability.** The software is provided "as is" under the [MIT License](LICENSE). The authors and contributors are not responsible for any loss or damage arising from its use.
+- **You are responsible for your own decisions.** Follow the laws, tax rules and broker terms that apply to you. Nothing here is investment, legal or tax advice.
+- **No affiliation.** This project is independent and is not affiliated with or endorsed by Alpaca, Yahoo, Telegram or any other service it connects to.
 
 ## Backtest Snapshot
 
@@ -192,6 +201,10 @@ The `risk_check.yml` workflow runs it. It has no schedule of its own: point a se
 - Model quality gates can fail because market returns are noisy. In that case the previous model remains active for that asset.
 - Reported backtest performance is limited to the supplied screenshot; fees, slippage, and other risk statistics are not documented in the repository.
 - Regression outputs and percentile cutoffs are not guarantees of future returns.
+
+## License and Security
+
+Released under the [MIT License](LICENSE). To report a security problem, see [SECURITY.md](SECURITY.md) and please do not open a public issue for it.
 
 ## Kaggle Model Prediction Curves
 
