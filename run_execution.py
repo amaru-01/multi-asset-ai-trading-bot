@@ -1,7 +1,9 @@
 """Execution orchestration for regression and legacy classifier models.
 
-Runs against the Alpaca paper account by default. Live trading is only used
-when the ALPACA_PAPER environment variable is explicitly set to "false".
+Runs against the Alpaca paper account by default. Live trading requires
+ALPACA_PAPER=false plus ALPACA_LIVE_CONFIRM and ALPACA_LIVE_MAX_CAPITAL (see the
+"Live-trading safeguards" block below). A kill switch and a daily-loss circuit
+breaker stop new entries without blocking exits.
 """
 
 import argparse
@@ -81,6 +83,97 @@ def is_paper_mode() -> bool:
 
 def mode_label() -> str:
     return "PAPER" if is_paper_mode() else "LIVE"
+
+
+# --- Live-trading safeguards ---------------------------------------------------
+# Going live needs ALL of: ALPACA_PAPER=false, ALPACA_LIVE_CONFIRM set to the exact
+# phrase below, and ALPACA_LIVE_MAX_CAPITAL set to a positive dollar amount. The bot
+# then sizes everything as if the account held at most that much money.
+LIVE_CONFIRM_ENV = "ALPACA_LIVE_CONFIRM"
+LIVE_CONFIRM_PHRASE = "I_ACCEPT_REAL_MONEY_RISK"
+LIVE_MAX_CAPITAL_ENV = "ALPACA_LIVE_MAX_CAPITAL"
+# Kill switch: set TRADING_HALTED=true, or create a file named HALT_TRADING in the
+# project root. New entries stop; exits, stop-losses and cleanups keep working.
+HALT_ENV = "TRADING_HALTED"
+HALT_FILE = PROJECT_ROOT / "HALT_TRADING"
+# Circuit breaker: stop opening positions once equity is down this much versus the
+# previous trading day's closing equity. Override with MAX_DAILY_LOSS_PCT (e.g. 0.02).
+DEFAULT_MAX_DAILY_LOSS_PCT = 0.03
+MAX_DAILY_LOSS_ENV = "MAX_DAILY_LOSS_PCT"
+
+
+def live_capital_cap() -> float | None:
+    """Return the live-mode capital cap in USD, or None in paper mode.
+
+    Raises ValueError if live mode is requested without the confirmation phrase or
+    without a valid positive capital cap, so a half-configured live run never starts.
+    """
+    if is_paper_mode():
+        return None
+    if os.getenv(LIVE_CONFIRM_ENV, "").strip() != LIVE_CONFIRM_PHRASE:
+        raise ValueError(
+            f"Live trading refused: set {LIVE_CONFIRM_ENV}={LIVE_CONFIRM_PHRASE} "
+            "to confirm you accept the risk of real-money trading"
+        )
+    raw = os.getenv(LIVE_MAX_CAPITAL_ENV, "").strip()
+    try:
+        cap = float(raw)
+    except ValueError:
+        cap = float("nan")
+    if not math.isfinite(cap) or cap <= 0:
+        raise ValueError(
+            f"Live trading refused: {LIVE_MAX_CAPITAL_ENV} must be a positive dollar "
+            f"amount (got {raw!r})"
+        )
+    return cap
+
+
+def kill_switch_active() -> bool:
+    if os.getenv(HALT_ENV, "").strip().lower() in {"1", "true", "yes", "on"}:
+        return True
+    return HALT_FILE.exists()
+
+
+def max_daily_loss_pct() -> float:
+    raw = os.getenv(MAX_DAILY_LOSS_ENV, "").strip()
+    if not raw:
+        return DEFAULT_MAX_DAILY_LOSS_PCT
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("Ignoring invalid %s=%r", MAX_DAILY_LOSS_ENV, raw)
+        return DEFAULT_MAX_DAILY_LOSS_PCT
+    return value if math.isfinite(value) and 0 < value < 1 else DEFAULT_MAX_DAILY_LOSS_PCT
+
+
+def entries_halt_reason(equity: float, last_equity: float | None) -> str | None:
+    """Why new positions must not be opened right now, or None if trading may proceed."""
+    if kill_switch_active():
+        return f"kill switch active ({HALT_ENV} or {HALT_FILE.name})"
+    if last_equity and last_equity > 0 and math.isfinite(equity):
+        change = equity / last_equity - 1.0
+        limit = max_daily_loss_pct()
+        if change <= -limit:
+            return (
+                f"daily loss circuit breaker: equity {change:+.2%} vs previous close "
+                f"(limit -{limit:.2%})"
+            )
+    return None
+
+
+def apply_capital_cap(
+    trading_client: TradingClient,
+    cap: float | None,
+    equity: float,
+    buying_power: float,
+) -> tuple[float, float]:
+    """Limit sizing inputs to the live capital cap (no-op in paper mode)."""
+    if cap is None:
+        return equity, buying_power
+    invested = sum(
+        get_position_value(trading_client, asset["alpaca_symbol"]) for asset in ASSETS
+    )
+    return min(equity, cap), min(buying_power, max(0.0, cap - invested))
 
 
 def create_trading_client() -> TradingClient:
@@ -349,8 +442,13 @@ def execute_asset(
     model,
     equity: float,
     buying_power: float,
+    halt_reason: str | None = None,
 ) -> None:
-    """Evaluate a signal, manage the position, and notify Telegram."""
+    """Evaluate a signal, manage the position, and notify Telegram.
+
+    `halt_reason`, when set, blocks opening new positions only; exits, stop-losses
+    and HOLD cleanups still run.
+    """
     feature_columns = model.feature_names or asset["feature_columns"]
     latest_features, reference_price, current_atr = get_latest_features(
         asset["ticker"], feature_columns
@@ -430,6 +528,14 @@ def execute_asset(
             )
         else:
             logger.info("HOLD signal, nothing to clean up ticker=%s", asset["ticker"])
+        return
+
+    if halt_reason:
+        logger.warning(
+            "Skipping buy: entries halted ticker=%s reason=%s",
+            asset["ticker"],
+            halt_reason,
+        )
         return
 
     blocked, block_reason = buying_blocked(asset["ticker"])
@@ -610,6 +716,11 @@ def main(argv: list[str] | None = None) -> int:
     """Execute requested assets serially using the configured Alpaca account."""
     arguments = _parse_args(argv)
     try:
+        capital_cap = live_capital_cap()
+    except ValueError as exc:
+        logger.error("%s", exc)
+        return 1
+    try:
         trading_client = create_trading_client()
         account = trading_client.get_account()
     except Exception:
@@ -617,12 +728,24 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     logger.info(
-        "Alpaca %s account status=%s equity=%s buying_power=%s",
+        "Alpaca %s account status=%s equity=%s buying_power=%s capital_cap=%s",
         mode_label(),
         account.status,
         account.equity,
         account.buying_power,
+        f"${capital_cap:,.2f}" if capital_cap is not None else "none (paper)",
     )
+    try:
+        last_equity = float(getattr(account, "last_equity", None) or 0) or None
+    except (TypeError, ValueError):
+        last_equity = None
+    halt_reason = entries_halt_reason(float(account.equity), last_equity)
+    if halt_reason:
+        logger.error("Entries halted: %s", halt_reason)
+        send_telegram_message(
+            f"<b>ENTRIES HALTED</b> [{mode_label()}]\n{escape(halt_reason)}\n"
+            "Exits and stop-losses still run."
+        )
     had_asset_failure = False
     for asset in arguments.assets:
         model_path = Path(asset["model_path"])
@@ -638,12 +761,19 @@ def main(argv: list[str] | None = None) -> int:
                 asset["feature_columns"],
             )
             current_account = trading_client.get_account()
+            sizing_equity, sizing_buying_power = apply_capital_cap(
+                trading_client,
+                capital_cap,
+                float(current_account.equity),
+                float(current_account.buying_power),
+            )
             execute_asset(
                 asset,
                 trading_client,
                 model,
-                float(current_account.equity),
-                float(current_account.buying_power),
+                sizing_equity,
+                sizing_buying_power,
+                halt_reason,
             )
         except Exception:
             had_asset_failure = True

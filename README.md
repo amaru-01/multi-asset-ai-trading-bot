@@ -152,6 +152,23 @@ All workflows support manual triggering via `workflow_dispatch` and require the 
 - `TELEGRAM_INSIGHTS_BOT_TOKEN` (for digest and insights)
 - `TELEGRAM_INSIGHTS_CHAT_ID` (for digest and insights)
 
+## Live-Trading Safeguards
+
+The bot trades on paper by default. Going live is deliberately hard: `run_execution.py` refuses to start unless **all three** are set.
+
+| Variable | Required value |
+| --- | --- |
+| `ALPACA_PAPER` | `false` |
+| `ALPACA_LIVE_CONFIRM` | `I_ACCEPT_REAL_MONEY_RISK` |
+| `ALPACA_LIVE_MAX_CAPITAL` | A positive dollar amount. All sizing treats the account as holding at most this much, counting positions already open. |
+
+Two controls stop **new entries** while still allowing exits, stop-losses and HOLD cleanups:
+
+- **Kill switch:** set `TRADING_HALTED=true`, or create an empty file named `HALT_TRADING` in the project root.
+- **Daily-loss circuit breaker:** entries stop when equity is down 3% or more versus the previous close. Override with `MAX_DAILY_LOSS_PCT` (for example `0.02`).
+
+A halt is also sent to Telegram. Run the tests with `python -m unittest discover -s tests -v`.
+
 ## Limitations
 
 - Historical Kaggle training notebooks and charts are archival; current models are trained by `retrain.py`.

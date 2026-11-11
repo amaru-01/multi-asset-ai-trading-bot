@@ -26,3 +26,6 @@ __pycache__/
 # OS-generated files
 .DS_Store
 Thumbs.db
+
+# Kill switch file (create it to halt new entries)
+HALT_TRADING
