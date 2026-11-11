@@ -128,6 +128,45 @@ def live_capital_cap() -> float | None:
     return cap
 
 
+BUY_ASSETS_ENV = "BUY_ASSETS"
+
+
+def _asset_names(asset: dict) -> set[str]:
+    return {
+        asset["ticker"].upper(),
+        asset["symbol"].upper(),
+        asset["alpaca_symbol"].upper(),
+    }
+
+
+def buy_enabled(asset: dict) -> bool:
+    """May the bot open NEW positions in this asset?
+
+    BUY_ASSETS (comma-separated tickers such as "BTC-USD,ETH-USD") overrides the
+    "buying_enabled" flag in config.py when set and non-empty. Use TRADING_HALTED to
+    stop buying everything. This never affects managing a position already held.
+    """
+    raw = os.getenv(BUY_ASSETS_ENV, "").strip()
+    if not raw:
+        return bool(asset.get("buying_enabled", True))
+    wanted = {item.strip().upper() for item in raw.split(",") if item.strip()}
+    return bool(wanted & _asset_names(asset))
+
+
+def warn_unknown_buy_assets() -> None:
+    """Log names in BUY_ASSETS that match no configured asset (likely typos)."""
+    raw = os.getenv(BUY_ASSETS_ENV, "").strip()
+    if not raw:
+        return
+    known = set().union(*(_asset_names(asset) for asset in ASSETS))
+    unknown = sorted(
+        item.strip() for item in raw.split(",")
+        if item.strip() and item.strip().upper() not in known
+    )
+    if unknown:
+        logger.warning("%s names no configured asset: %s", BUY_ASSETS_ENV, unknown)
+
+
 def kill_switch_source() -> str | None:
     """Name what triggered the kill switch, or None if it is off."""
     if os.getenv(HALT_ENV, "").strip().lower() in {"1", "true", "yes", "on"}:
@@ -603,6 +642,15 @@ def execute_asset(
         )
         return
 
+    if not buy_enabled(asset):
+        logger.info(
+            "Skipping buy: buying disabled for asset ticker=%s "
+            "(config buying_enabled / %s)",
+            asset["ticker"],
+            BUY_ASSETS_ENV,
+        )
+        return
+
     blocked, block_reason = buying_blocked(asset["ticker"])
     if blocked:
         logger.warning(
@@ -818,6 +866,11 @@ def main(argv: list[str] | None = None) -> int:
         last_equity = float(getattr(account, "last_equity", None) or 0) or None
     except (TypeError, ValueError):
         last_equity = None
+    warn_unknown_buy_assets()
+    logger.info(
+        "Buying enabled for: %s",
+        [a["ticker"] for a in arguments.assets if buy_enabled(a)] or "none",
+    )
     halt_reason = entries_halt_reason(float(account.equity), last_equity)
     if halt_reason:
         logger.error("Entries halted: %s", halt_reason)

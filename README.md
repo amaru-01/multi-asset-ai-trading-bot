@@ -189,6 +189,12 @@ Two controls stop **new entries** while still allowing exits, stop-losses and HO
 
 A halt is also sent to Telegram. Run the tests with `python -m unittest discover -s tests -v`.
 
+## Which Assets May Buy
+
+Each asset in `config.py` has a `buying_enabled` flag that decides whether the bot may **open new positions** in it. Only **BTC-USD** is enabled by default, because the walk-forward backtest and robustness check showed a timing edge only for Bitcoin: SPY almost never triggers an entry, and ETH-USD lost to a time-in-market-matched buy-and-hold in 8 of 9 settings. The model for every asset is still retrained and reported.
+
+The flag never stops the bot from managing a position it already holds: stop-losses, HOLD-signal cleanups and SPY bracket exits all still work for disabled assets. To change the set without editing code, set the `BUY_ASSETS` variable (locally, or as a repository variable on GitHub Actions) to a comma-separated list such as `BTC-USD,ETH-USD`. A non-empty `BUY_ASSETS` replaces the config flags; leave it unset to use them. Unknown names are logged as warnings. To stop buying everything, use `TRADING_HALTED` instead.
+
 ## Frequent Stop-Loss Check
 
 Alpaca has no bracket orders for crypto, so the crypto stop-loss is enforced by the bot, and the full trading run only happens every couple of hours. `python run_execution.py --risk-only` is a lightweight mode for running much more often: it only checks open crypto positions against their ATR stop and closes any that fell through it. It loads no model, creates no signals and never opens a position. With no open position it fetches no market data. It does not need the live-mode confirmation, so a misconfigured setup can never leave a position unchecked.

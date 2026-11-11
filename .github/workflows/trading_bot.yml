@@ -74,6 +74,9 @@ jobs:
           # A HALT_TRADING file cannot work here: every run starts from a fresh checkout.
           TRADING_HALTED: ${{ vars.TRADING_HALTED }}
           MAX_DAILY_LOSS_PCT: ${{ vars.MAX_DAILY_LOSS_PCT }}
+          # Which assets may open NEW positions, e.g. "BTC-USD" or "BTC-USD,ETH-USD".
+          # Empty (variable not set) uses the buying_enabled flags in config.py.
+          BUY_ASSETS: ${{ vars.BUY_ASSETS }}
         run: python run_execution.py
 
       - name: Send Email Notification
