@@ -3,31 +3,31 @@
     "BTC-USD": {
       "buying": "blocked",
       "candidate": {
-        "accuracy": 0.5577464788732395,
-        "backtest_mean_net": -0.0029641727935559724,
-        "backtest_trades": 11,
-        "decision_threshold": 0.0023004987742751837,
+        "accuracy": 0.543661971830986,
+        "backtest_mean_net": -0.004165459999792302,
+        "backtest_trades": 12,
+        "decision_threshold": 0.0025777651462703943,
         "entry_bar": 0.006,
         "gate_path": "FAIL",
         "majority_baseline": 0.5830985915492958,
         "prediction_quantiles": {
-          "p50": 0.001386575517244637,
-          "p75": 0.0038496567867696285,
-          "p90": 0.008617078699171544,
-          "p95": 0.010665761772543194,
-          "p99": 0.021611428409814833
+          "p50": 0.001825339742936194,
+          "p75": 0.003921572701074183,
+          "p90": 0.009389771334826947,
+          "p95": 0.013402192573994397,
+          "p99": 0.02137473937124009
         },
-        "roc_auc": 0.5322659616137877,
+        "roc_auc": 0.5344202898550725,
         "wf_folds": 4,
-        "wf_mean_auc": 0.4850353333277402,
-        "wf_positive_folds": 1
+        "wf_mean_auc": 0.4967420107679289,
+        "wf_positive_folds": 2
       },
-      "checked_at": "2026-11-11T09:53:40+00:00",
+      "checked_at": "2026-11-15T06:12:30+00:00",
       "deployed_candidate": false,
       "evidence_pass": false,
       "forward": {
         "mean_net": null,
-        "rows": 16,
+        "rows": 19,
         "since": "2026-10-25",
         "trades": 0,
         "win_rate": null
@@ -53,50 +53,50 @@
     "ETH-USD": {
       "buying": "blocked",
       "candidate": {
-        "accuracy": 0.48450704225352115,
-        "backtest_mean_net": -0.02320039374755602,
-        "backtest_trades": 21,
-        "decision_threshold": 0.0019938501063734293,
+        "accuracy": 0.4507042253521127,
+        "backtest_mean_net": -0.02326481952406901,
+        "backtest_trades": 16,
+        "decision_threshold": -0.0006925946800038218,
         "entry_bar": 0.006,
         "gate_path": "FAIL",
         "majority_baseline": 0.5802816901408451,
         "prediction_quantiles": {
-          "p50": 0.002335531869903207,
-          "p75": 0.006258984329178929,
-          "p90": 0.010534319095313553,
-          "p95": 0.012449842039495708,
-          "p99": 0.018496159501373767
+          "p50": 0.0022787773050367832,
+          "p75": 0.006059052189812064,
+          "p90": 0.009557412751019002,
+          "p95": 0.012370916549116377,
+          "p99": 0.01654973976314067
         },
-        "roc_auc": 0.47856258552160036,
+        "roc_auc": 0.47209552355509216,
         "wf_folds": 4,
-        "wf_mean_auc": 0.48162396043954026,
-        "wf_positive_folds": 1
+        "wf_mean_auc": 0.48398981395991447,
+        "wf_positive_folds": 0
       },
-      "checked_at": "2026-11-11T09:53:41+00:00",
+      "checked_at": "2026-11-15T06:12:30+00:00",
       "classifier_challenger": {
-        "backtest_mean_net": -0.016850236029358277,
-        "backtest_trades": 24,
+        "backtest_mean_net": -0.025818540663319633,
+        "backtest_trades": 23,
         "evaluated": true,
         "passed": false,
-        "roc_auc": 0.44849156186876915,
+        "roc_auc": 0.46204469928976344,
         "wf_folds": 4,
-        "wf_mean_auc": 0.46690364124229705,
+        "wf_mean_auc": 0.4682132049032339,
         "wf_positive_folds": 0
       },
       "deployed_candidate": false,
       "evidence_pass": false,
       "forward": {
-        "mean_net": -0.13173905208051906,
-        "rows": 16,
+        "mean_net": -0.18395631813559932,
+        "rows": 19,
         "since": "2026-10-25",
         "trades": 1,
         "win_rate": 0.0
       },
       "incumbent": {
         "backtest": {
-          "mean_net": -0.016036445716745205,
+          "mean_net": -0.03142092295384075,
           "passes": false,
-          "total_net": -0.08018222858372602,
+          "total_net": -0.15710461476920376,
           "trades": 5,
           "win_rate": 0.6
         },
@@ -107,7 +107,7 @@
       },
       "live_model": "Legacy Classifier (existing)",
       "pass_streak": 0,
-      "reason": "no model passed: candidate rejected and existing Legacy Classifier is not proven by the net-of-cost back-test (5 trades, mean net -1.60% per trade; fewer than the 10 needed to trust it)",
+      "reason": "no model passed: candidate rejected and existing Legacy Classifier is not proven by the net-of-cost back-test (5 trades, mean net -3.14% per trade; fewer than the 10 needed to trust it)",
       "tracking_since": "2026-10-25"
     },
     "SPY": {
@@ -116,49 +116,49 @@
         "accuracy": 0.6058091286307054,
         "backtest_mean_net": null,
         "backtest_trades": 0,
-        "decision_threshold": 0.0018371532205492258,
+        "decision_threshold": 0.0018233917653560638,
         "entry_bar": 0.006,
         "gate_path": "FAIL",
         "majority_baseline": 0.5933609958506224,
         "prediction_quantiles": {
-          "p50": 0.0013941227225586772,
-          "p75": 0.0014916314976289868,
-          "p90": 0.0015211586141958833,
-          "p95": 0.0016074005980044603,
-          "p99": 0.002788534620776763
+          "p50": 0.0013216373044997454,
+          "p75": 0.0015757015207782388,
+          "p90": 0.0015757015207782388,
+          "p95": 0.0016048074467107654,
+          "p99": 0.00327766216360031
         },
-        "roc_auc": 0.465819894391323,
+        "roc_auc": 0.48990295418866847,
         "wf_folds": 4,
-        "wf_mean_auc": 0.529482828085316,
+        "wf_mean_auc": 0.5318616038811962,
         "wf_positive_folds": 3
       },
-      "checked_at": "2026-11-11T09:53:40+00:00",
+      "checked_at": "2026-11-15T06:12:30+00:00",
       "classifier_challenger": {
-        "backtest_mean_net": 0.0027185345270757033,
+        "backtest_mean_net": -0.0004090704153797658,
         "backtest_trades": 7,
         "evaluated": true,
         "passed": false,
-        "roc_auc": 0.4850149850149851,
+        "roc_auc": 0.46742543171114603,
         "wf_folds": 4,
-        "wf_mean_auc": 0.5290116395147348,
-        "wf_positive_folds": 2
+        "wf_mean_auc": 0.5235927600795927,
+        "wf_positive_folds": 3
       },
       "deployed_candidate": false,
       "evidence_pass": true,
       "forward": {
-        "mean_net": null,
-        "rows": 12,
+        "mean_net": -0.007659687894191858,
+        "rows": 15,
         "since": "2026-10-25",
-        "trades": 0,
-        "win_rate": null
+        "trades": 1,
+        "win_rate": 0.0
       },
       "incumbent": {
         "backtest": {
-          "mean_net": 0.0026188431887887768,
+          "mean_net": 0.002345490829087413,
           "passes": true,
-          "total_net": 0.06285223653093064,
-          "trades": 24,
-          "win_rate": 0.6666666666666666
+          "total_net": 0.0539462890690105,
+          "trades": 23,
+          "win_rate": 0.6521739130434783
         },
         "entry_bar": 0.6,
         "model_type": "Legacy Classifier",
@@ -166,10 +166,10 @@
         "threshold": 0.55
       },
       "live_model": "Legacy Classifier (existing, unverified)",
-      "pass_streak": 4,
-      "reason": "candidate rejected; existing Legacy Classifier is profitable on the holdout (24 trades, mean net +0.26% per trade) but may have trained on that data",
+      "pass_streak": 5,
+      "reason": "candidate rejected; existing Legacy Classifier is profitable on the holdout (23 trades, mean net +0.23% per trade) but may have trained on that data",
       "tracking_since": "2026-10-25"
     }
   },
-  "updated_at": "2026-11-11T09:53:41+00:00"
+  "updated_at": "2026-11-15T06:12:30+00:00"
 }
